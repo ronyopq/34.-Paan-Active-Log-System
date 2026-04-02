@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "praan",
+  "compatibility_date": "2026-03-09",
+
+  // IMPORTANT:
+  // Run: npx wrangler pages download config praan
+  // Then merge these bindings into generated wrangler.jsonc
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "praan_db",
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "migrations_dir": "cloudflare/migrations"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "CACHE",
+      "id": "REPLACE_WITH_KV_NAMESPACE_ID",
+      "preview_id": "REPLACE_WITH_KV_PREVIEW_NAMESPACE_ID"
+    }
+  ]
+}
