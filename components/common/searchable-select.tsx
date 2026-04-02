@@ -50,21 +50,26 @@ export const SearchableSelect = ({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
+  const [queryEdited, setQueryEdited] = useState(false);
 
   const selectedOption = options.find((option) => option.value === value) || null;
 
   useEffect(() => {
     setQuery(selectedOption?.label || value || "");
+    setQueryEdited(false);
   }, [selectedOption, value]);
 
+  const effectiveQuery =
+    open && !queryEdited && !allowCustomValue && query === (selectedOption?.label || value || "") ? "" : query;
+
   const filteredOptions = useMemo(() => {
-    const needle = normalizeText(query);
+    const needle = normalizeText(effectiveQuery);
     return !needle
       ? options
       : options.filter((option) =>
           normalizeText(`${option.label} ${option.value} ${option.hint || ""}`).includes(needle)
         );
-  }, [options, query]);
+  }, [effectiveQuery, options]);
 
   useEffect(() => {
     const firstEnabledIndex = filteredOptions.findIndex((option) => !option.disabled);
@@ -81,6 +86,7 @@ export const SearchableSelect = ({
     if (preserveSelection) {
       setQuery(selectedOption?.label || value || "");
     }
+    setQueryEdited(false);
     setOpen(false);
   };
 
@@ -95,6 +101,7 @@ export const SearchableSelect = ({
     if (nextValue) {
       onCommitCustomValue?.(nextValue);
     }
+    setQueryEdited(false);
     setOpen(false);
   };
 
@@ -102,6 +109,7 @@ export const SearchableSelect = ({
     if (option.disabled) return;
     onChange(option.value);
     setQuery(option.label);
+    setQueryEdited(false);
     setOpen(false);
   };
 
@@ -115,9 +123,11 @@ export const SearchableSelect = ({
             if (nextValue) {
               onCommitCustomValue?.(nextValue);
             }
+            setQueryEdited(false);
             setOpen(false);
           } else {
             setQuery(selectedOption?.label || value || "");
+            setQueryEdited(false);
             setOpen(false);
           }
         }
@@ -167,7 +177,10 @@ export const SearchableSelect = ({
       ref={rootRef}
       className={clsx("search-select", open && "open", disabled && "disabled")}
       onFocusCapture={() => {
-        if (!disabled) setOpen(true);
+        if (!disabled) {
+          setOpen(true);
+          setQueryEdited(false);
+        }
       }}
     >
       <div className="search-select-control">
@@ -185,6 +198,7 @@ export const SearchableSelect = ({
             setQuery(event.target.value);
             setOpen(true);
             setActiveIndex(0);
+            setQueryEdited(true);
             if (allowCustomValue && !event.target.value.trim()) {
               onChange("");
             }
@@ -199,7 +213,13 @@ export const SearchableSelect = ({
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => {
             if (disabled) return;
-            setOpen((prev) => !prev);
+            setOpen((prev) => {
+              const next = !prev;
+              if (next) {
+                setQueryEdited(false);
+              }
+              return next;
+            });
             inputRef.current?.focus();
           }}
           aria-label="Toggle options"
