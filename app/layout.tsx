@@ -7,6 +7,14 @@ import { AppProviders } from "@/components/providers/app-providers";
 export const metadata: Metadata = {
   title: "PRAAN Activity Management System",
   description: "PRAAN Activity Management System frontend based on SRS v1.3",
+  icons: {
+    icon: "/logo.svg",
+    shortcut: "/logo.svg",
+    apple: "/logo.svg"
+  },
+  other: {
+    "mobile-web-app-capable": "yes"
+  },
   appleWebApp: {
     capable: true,
     title: "PRAAN AMS",
