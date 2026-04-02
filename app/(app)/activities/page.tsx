@@ -7,7 +7,9 @@ import { KpiCard } from "@/components/common/kpi-card";
 import { Pagination } from "@/components/common/pagination";
 import { StatusBadge } from "@/components/common/status-badge";
 import { useAppContext } from "@/components/providers/app-context";
+import { exportEntriesToExcel } from "@/lib/data-io";
 import { formatCurrency, formatDate, normalizeText } from "@/lib/format";
+import { exportEntriesToCsv } from "@/lib/reporting";
 import { ActivityEntry } from "@/lib/types";
 
 const PAGE_SIZE = 9;
@@ -73,38 +75,7 @@ export default function ActivitiesPage() {
   const pagedRows = filtered.slice(startIndex, startIndex + PAGE_SIZE);
 
   const exportCsv = () => {
-    const header = [
-      "ID",
-      "Activity",
-      "Project",
-      "Date",
-      "Location",
-      "Participants",
-      "Budget",
-      "Status",
-      "Submitted By"
-    ];
-
-    const rows = filtered.map((entry) => [
-      entry.uniqueId,
-      entry.activityName,
-      entry.project,
-      formatDate(entry.date),
-      `${entry.district}, ${entry.upazila}`,
-      String(entry.grandTotal),
-      String(entry.totalBudget),
-      entry.status,
-      entry.createdBy
-    ]);
-
-    const csv = [header, ...rows].map((line) => line.join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "activities.csv";
-    anchor.click();
-    URL.revokeObjectURL(url);
+    exportEntriesToCsv(filtered, "activities-detailed.csv");
   };
 
   const requestDelete = (entry: ActivityEntry) => {
@@ -136,6 +107,9 @@ export default function ActivitiesPage() {
           </p>
         </div>
         <div className="d-flex gap-2 align-items-center page-actions">
+          <button className="outline-btn" onClick={() => exportEntriesToExcel(filtered, "activities-detailed.xlsx")}>
+            <i className="bi bi-file-earmark-excel" /> Export Excel
+          </button>
           <button className="primary-btn" onClick={exportCsv}>
             <i className="bi bi-download" /> Export CSV
           </button>

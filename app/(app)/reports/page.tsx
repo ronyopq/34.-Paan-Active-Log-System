@@ -5,6 +5,7 @@ import { KpiCard } from "@/components/common/kpi-card";
 import { useAppContext } from "@/components/providers/app-context";
 import { formatCurrency, formatDate } from "@/lib/format";
 import {
+  exportEntriesToCsv,
   exportEntriesReportToExcel,
   exportEntriesReportToPdf,
   filterEntriesByReportFilters,
@@ -107,6 +108,14 @@ export default function ReportsPage() {
           </p>
         </div>
         <div className="d-flex gap-2 flex-wrap page-actions">
+          <button
+            className="outline-btn"
+            type="button"
+            disabled={!filteredEntries.length}
+            onClick={() => exportEntriesToCsv(filteredEntries, "report-detailed.csv")}
+          >
+            <i className="bi bi-filetype-csv" /> Export CSV
+          </button>
           <button
             className="outline-btn"
             type="button"

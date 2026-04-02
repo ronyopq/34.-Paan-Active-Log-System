@@ -325,6 +325,91 @@ a {
   padding-left: 38px;
 }
 
+.search-select {
+  position: relative;
+}
+
+.search-select-control {
+  position: relative;
+}
+
+.search-select-input {
+  padding-right: 2.75rem !important;
+}
+
+.search-select-toggle {
+  position: absolute;
+  top: 50%;
+  right: 0.5rem;
+  transform: translateY(-50%);
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-muted);
+  display: grid;
+  place-items: center;
+}
+
+.search-select.open .search-select-toggle,
+.search-select-toggle:hover {
+  color: var(--brand);
+  background: color-mix(in srgb, var(--brand-soft) 50%, transparent);
+}
+
+.search-select-menu {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  right: 0;
+  z-index: 35;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid color-mix(in srgb, var(--brand) 30%, var(--line));
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 16px 34px rgba(16, 38, 63, 0.16);
+  padding: 0.35rem;
+}
+
+.search-select-option {
+  width: 100%;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  padding: 0.65rem 0.75rem;
+  display: grid;
+  gap: 0.15rem;
+}
+
+.search-select-option small {
+  color: var(--text-muted);
+}
+
+.search-select-option.active,
+.search-select-option:hover {
+  background: color-mix(in srgb, var(--brand-soft) 65%, var(--surface));
+}
+
+.search-select-option.selected {
+  color: var(--brand);
+  font-weight: 700;
+}
+
+.search-select-option.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.search-select-empty {
+  padding: 0.8rem 0.85rem;
+  color: var(--text-muted);
+  font-size: 0.92rem;
+}
+
 /* Override Bootstrap form-select defaults for consistent mobile UX */
 .form-select {
   height: auto;

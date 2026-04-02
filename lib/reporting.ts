@@ -78,6 +78,82 @@ export const summarizeEntries = (entries: ActivityEntry[]) => {
   };
 };
 
+const toAttachmentSummary = (entry: ActivityEntry, kind?: "image" | "document") =>
+  entry.attachments
+    .filter((file) => (kind ? file.type === kind : true))
+    .map((file) => `${file.name} (${file.category})`)
+    .join(" | ");
+
+const toAttachmentLinks = (entry: ActivityEntry, kind?: "image" | "document") =>
+  entry.attachments
+    .filter((file) => (kind ? file.type === kind : true))
+    .map((file) => file.url)
+    .join(" | ");
+
+const toReferenceLinks = (value: string) =>
+  String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .join(" | ");
+
+export const buildEntryExportRows = (entries: ActivityEntry[]) =>
+  entries.map((entry) => ({
+    ID: entry.uniqueId,
+    Status: entry.status,
+    Date: formatDate(entry.date),
+    Project: entry.project,
+    Activity: entry.activityName,
+    ActivityCode: entry.activityCode,
+    ActivityType: entry.activityType,
+    District: entry.district,
+    Upazila: entry.upazila,
+    Union: entry.union,
+    Venue: entry.venue,
+    ImplementedBy: entry.implementedBy,
+    Participants: entry.grandTotal,
+    Male: entry.totalMale,
+    Female: entry.totalFemale,
+    Budget: entry.totalBudget,
+    Expenses: entry.totalExpenses,
+    VariancePercent: Number(entry.variance.toFixed(2)),
+    ReferenceLinks: toReferenceLinks(entry.referenceLink),
+    Notes: entry.notes,
+    AIReport: entry.aiReport,
+    AttachmentCount: entry.attachments.length,
+    AttachmentNames: toAttachmentSummary(entry),
+    AttachmentLinks: toAttachmentLinks(entry),
+    ImageLinks: toAttachmentLinks(entry, "image"),
+    DocumentLinks: toAttachmentLinks(entry, "document"),
+    ImageNames: toAttachmentSummary(entry, "image"),
+    DocumentNames: toAttachmentSummary(entry, "document"),
+    CreatedBy: entry.createdBy,
+    CreatedAt: entry.createdAt,
+    UpdatedAt: entry.updatedAt,
+    SubmittedAt: entry.submittedAt || "",
+    ReviewedBy: entry.reviewedBy || "",
+    ReviewedAt: entry.reviewedAt || ""
+  }));
+
+export const buildAttachmentExportRows = (entries: ActivityEntry[]) =>
+  entries.flatMap((entry) =>
+    entry.attachments.map((file) => ({
+      EntryID: entry.uniqueId,
+      Date: formatDate(entry.date),
+      Project: entry.project,
+      Activity: entry.activityName,
+      District: entry.district,
+      Upazila: entry.upazila,
+      Union: entry.union,
+      FileCategory: file.category,
+      FileName: file.name,
+      FileType: file.type,
+      FileSizeKB: file.sizeKb,
+      FileLink: file.url,
+      ReferenceLinks: toReferenceLinks(entry.referenceLink)
+    }))
+  );
+
 const buildReportFileName = (prefix: string) => {
   const now = new Date();
   const stamp = [
@@ -88,6 +164,38 @@ const buildReportFileName = (prefix: string) => {
     String(now.getMinutes()).padStart(2, "0")
   ].join("");
   return `${prefix}-${stamp}`;
+};
+
+const escapeCsvValue = (value: string | number) => {
+  const stringValue = String(value ?? "");
+  if (/[",\n]/.test(stringValue)) {
+    return `"${stringValue.replaceAll('"', '""')}"`;
+  }
+  return stringValue;
+};
+
+export const exportEntriesToCsv = (
+  entries: ActivityEntry[],
+  fileName = `${buildReportFileName("praan-export")}.csv`
+) => {
+  const rows = buildEntryExportRows(entries);
+  const headers = rows.length ? Object.keys(rows[0]) : ["ID"];
+  const csv = [
+    headers,
+    ...rows.map((row) =>
+      headers.map((header) => escapeCsvValue(row[header as keyof typeof row] ?? ""))
+    )
+  ]
+    .map((line) => line.join(","))
+    .join("\n");
+
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  URL.revokeObjectURL(url);
 };
 
 export const exportEntriesReportToExcel = (
@@ -104,31 +212,11 @@ export const exportEntriesReportToExcel = (
   );
   XLSX.utils.book_append_sheet(workbook, filterSheet, "Filters");
 
-  const dataSheet = XLSX.utils.json_to_sheet(
-    entries.map((entry) => ({
-      ID: entry.uniqueId,
-      Status: entry.status,
-      Date: formatDate(entry.date),
-      Project: entry.project,
-      Activity: entry.activityName,
-      ActivityCode: entry.activityCode,
-      ActivityType: entry.activityType,
-      District: entry.district,
-      Upazila: entry.upazila,
-      Union: entry.union,
-      Venue: entry.venue,
-      ImplementedBy: entry.implementedBy,
-      Participants: entry.grandTotal,
-      Male: entry.totalMale,
-      Female: entry.totalFemale,
-      Budget: entry.totalBudget,
-      Expenses: entry.totalExpenses,
-      VariancePercent: Number(entry.variance.toFixed(2)),
-      Files: entry.attachments.length,
-      CreatedBy: entry.createdBy
-    }))
-  );
+  const dataSheet = XLSX.utils.json_to_sheet(buildEntryExportRows(entries));
   XLSX.utils.book_append_sheet(workbook, dataSheet, "Activities");
+
+  const attachmentSheet = XLSX.utils.json_to_sheet(buildAttachmentExportRows(entries));
+  XLSX.utils.book_append_sheet(workbook, attachmentSheet, "Attachments");
 
   XLSX.writeFile(workbook, fileName);
 };

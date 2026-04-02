@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
+import { SearchableOption, SearchableSelect } from "@/components/common/searchable-select";
 import { useAppContext } from "@/components/providers/app-context";
 import { buildAttachmentFileName, getFileExtension, getMimeExtension, replaceFileExtension } from "@/lib/attachments";
 import { calcUtilization, calcVariance, formatCurrency } from "@/lib/format";
@@ -410,9 +411,12 @@ export const NewActivityForm = () => {
 
   const selectedProjectMap = projectMap.find((item) => item.project === form.project);
   const selectedDistrictMap = locationMap.find((item) => item.district === form.district);
-  const upazilaList = selectedDistrictMap ? selectedDistrictMap.upazilas.map((item) => item.name) : [];
+  const upazilaList = useMemo(
+    () => (selectedDistrictMap ? selectedDistrictMap.upazilas.map((item) => item.name) : []),
+    [selectedDistrictMap]
+  );
   const selectedUpazila = selectedDistrictMap?.upazilas.find((item) => item.name === form.upazila);
-  const unionList = selectedUpazila?.unions ?? [];
+  const unionList = useMemo(() => selectedUpazila?.unions ?? [], [selectedUpazila]);
   const budgetValue = Number(form.budget || 0);
   const expenseValue = Number(form.expenses || 0);
   const totalMale = participants.reduce((sum, row) => sum + row.male, 0);
@@ -438,6 +442,53 @@ export const NewActivityForm = () => {
     if (hasPendingUploads) return Math.max(1, Math.min(99, raw));
     return Math.max(0, raw);
   }, [allUploads, hasPendingUploads]);
+
+  const projectOptions = useMemo<SearchableOption[]>(
+    () =>
+      projectMap.map((item) => ({
+        value: item.project,
+        label: item.project,
+        disabled: Boolean(item.locked) && (!isEditMode || item.project !== form.project),
+        hint: item.locked ? "Locked" : undefined
+      })),
+    [projectMap, isEditMode, form.project]
+  );
+
+  const activityOptions = useMemo<SearchableOption[]>(
+    () =>
+      (selectedProjectMap?.activities || []).map((item) => ({
+        value: item.name,
+        label: item.name,
+        disabled: Boolean(item.locked) && (!isEditMode || item.name !== form.activityName),
+        hint: item.locked ? "Locked" : item.type
+      })),
+    [selectedProjectMap, isEditMode, form.activityName]
+  );
+
+  const districtOptions = useMemo<SearchableOption[]>(
+    () => locationMap.map((item) => ({ value: item.district, label: item.district })),
+    [locationMap]
+  );
+
+  const upazilaOptions = useMemo<SearchableOption[]>(
+    () => upazilaList.map((item) => ({ value: item, label: item })),
+    [upazilaList]
+  );
+
+  const unionOptions = useMemo<SearchableOption[]>(
+    () => unionList.map((item) => ({ value: item, label: item })),
+    [unionList]
+  );
+
+  const venueSearchOptions = useMemo<SearchableOption[]>(
+    () => venueOptions.map((item) => ({ value: item, label: item })),
+    [venueOptions]
+  );
+
+  const implementedBySearchOptions = useMemo<SearchableOption[]>(
+    () => implementedByOptions.map((item) => ({ value: item, label: item })),
+    [implementedByOptions]
+  );
 
   const addVenueChoice = (value: string) => {
     const item = value.trim();
@@ -893,47 +944,28 @@ export const NewActivityForm = () => {
                     </div>
                     <div className="col-md-4">
                       <label className="form-label">Project *</label>
-                      <select
-                        className="form-select premium-input"
+                      <SearchableSelect
                         value={form.project}
-                        onChange={(event) => setProject(event.target.value)}
-                      >
-                        <option value="">Select project</option>
-                        {projectMap.map((item) => (
-                          <option
-                            key={item.project}
-                            value={item.project}
-                            disabled={Boolean(item.locked) && (!isEditMode || item.project !== form.project)}
-                          >
-                            {item.project}
-                            {item.locked ? " (Locked)" : ""}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={setProject}
+                        options={projectOptions}
+                        placeholder="Select project"
+                        disabled={!availableProjects.length}
+                        emptyMessage="No project found"
+                      />
                       {!availableProjects.length && (
                         <small className="text-danger">All projects are currently locked by admin.</small>
                       )}
                     </div>
                     <div className="col-md-4">
                       <label className="form-label">Activity *</label>
-                      <select
-                        className="form-select premium-input"
+                      <SearchableSelect
                         value={form.activityName}
-                        onChange={(event) => setActivity(event.target.value)}
+                        onChange={setActivity}
+                        options={activityOptions}
+                        placeholder={selectedProjectMap ? "Select activity" : "Select project first"}
                         disabled={!selectedProjectMap}
-                      >
-                        <option value="">{selectedProjectMap ? "Select activity" : "Select project first"}</option>
-                        {selectedProjectMap?.activities.map((item) => (
-                          <option
-                            key={item.name}
-                            value={item.name}
-                            disabled={Boolean(item.locked) && (!isEditMode || item.name !== form.activityName)}
-                          >
-                            {item.name}
-                            {item.locked ? " (Locked)" : ""}
-                          </option>
-                        ))}
-                      </select>
+                        emptyMessage="No activity found"
+                      />
                     </div>
                     <div className="col-md-4">
                       <label className="form-label">Activity Code *</label>
@@ -941,88 +973,59 @@ export const NewActivityForm = () => {
                     </div>
                     <div className="col-md-6">
                       <label className="form-label">Venue *</label>
-                      <input
-                        className="form-control premium-input"
-                        list="venue-options"
+                      <SearchableSelect
                         value={form.venue}
-                        onChange={(event) => setForm((prev) => ({ ...prev, venue: event.target.value }))}
-                        onKeyDown={(event) => {
-                          if (event.key !== "Enter") return;
-                          event.preventDefault();
-                          addVenueChoice(form.venue);
-                        }}
+                        onChange={(value) => setForm((prev) => ({ ...prev, venue: value }))}
+                        options={venueSearchOptions}
+                        placeholder="Search or type venue"
+                        allowCustomValue
+                        onCommitCustomValue={addVenueChoice}
+                        emptyMessage="No saved venue found"
                       />
-                      <datalist id="venue-options">
-                        {venueOptions.map((item) => (
-                          <option key={item} value={item} />
-                        ))}
-                      </datalist>
                     </div>
                     <div className="col-md-6">
                       <label className="form-label">Implemented By *</label>
-                      <input
-                        className="form-control premium-input"
-                        list="implemented-options"
+                      <SearchableSelect
                         value={form.implementedBy}
-                        onChange={(event) => setForm((prev) => ({ ...prev, implementedBy: event.target.value }))}
-                        onKeyDown={(event) => {
-                          if (event.key !== "Enter") return;
-                          event.preventDefault();
-                          addImplementedByChoice(form.implementedBy);
-                        }}
+                        onChange={(value) => setForm((prev) => ({ ...prev, implementedBy: value }))}
+                        options={implementedBySearchOptions}
+                        placeholder="Search or type implementer"
+                        allowCustomValue
+                        onCommitCustomValue={addImplementedByChoice}
+                        emptyMessage="No saved implementer found"
                       />
-                      <datalist id="implemented-options">
-                        {implementedByOptions.map((item) => (
-                          <option key={item} value={item} />
-                        ))}
-                      </datalist>
                     </div>
                     <div className="col-md-4">
                       <label className="form-label">District *</label>
-                      <select
-                        className="form-select premium-input"
+                      <SearchableSelect
                         value={form.district}
-                        onChange={(event) => setDistrict(event.target.value)}
-                      >
-                        <option value="">Select district</option>
-                        {locationMap.map((item) => (
-                          <option key={item.district} value={item.district}>
-                            {item.district}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={setDistrict}
+                        options={districtOptions}
+                        placeholder="Select district"
+                        emptyMessage="No district found"
+                      />
                     </div>
                     <div className="col-md-4">
                       <label className="form-label">Upazila *</label>
-                      <select
-                        className="form-select premium-input"
+                      <SearchableSelect
                         value={form.upazila}
-                        onChange={(event) => setUpazila(event.target.value)}
+                        onChange={setUpazila}
+                        options={upazilaOptions}
+                        placeholder={upazilaList.length ? "Select upazila" : "Select district first"}
                         disabled={!upazilaList.length}
-                      >
-                        <option value="">{upazilaList.length ? "Select upazila" : "Select district first"}</option>
-                        {upazilaList.map((item) => (
-                          <option key={item} value={item}>
-                            {item}
-                          </option>
-                        ))}
-                      </select>
+                        emptyMessage="No upazila found"
+                      />
                     </div>
                     <div className="col-md-4">
                       <label className="form-label">Union *</label>
-                      <select
-                        className="form-select premium-input"
+                      <SearchableSelect
                         value={form.union}
-                        onChange={(event) => setForm((prev) => ({ ...prev, union: event.target.value }))}
+                        onChange={(value) => setForm((prev) => ({ ...prev, union: value }))}
+                        options={unionOptions}
+                        placeholder={unionList.length ? "Select union" : "Select upazila first"}
                         disabled={!unionList.length}
-                      >
-                        <option value="">{unionList.length ? "Select union" : "Select upazila first"}</option>
-                        {unionList.map((item) => (
-                          <option key={item} value={item}>
-                            {item}
-                          </option>
-                        ))}
-                      </select>
+                        emptyMessage="No union found"
+                      />
                     </div>
                   </div>
                 </div>
