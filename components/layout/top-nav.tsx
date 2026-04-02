@@ -10,6 +10,7 @@ import { useAppContext } from "@/components/providers/app-context";
 const isActivePath = (pathname: string, href: string) => {
   const routePath = href.split("#")[0];
   if (routePath === "/dashboard") return pathname === "/dashboard";
+  if (routePath === "/activities") return pathname === "/activities";
   return pathname === routePath || pathname.startsWith(`${routePath}/`);
 };
 

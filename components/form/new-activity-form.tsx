@@ -5,6 +5,7 @@ import clsx from "clsx";
 import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAppContext } from "@/components/providers/app-context";
+import { buildAttachmentFileName, getFileExtension, getMimeExtension, replaceFileExtension } from "@/lib/attachments";
 import { calcUtilization, calcVariance, formatCurrency } from "@/lib/format";
 import {
   ActivityAttachment,
@@ -54,13 +55,14 @@ type FormState = {
 type UploadedItem = {
   id: string;
   attachmentId?: string;
+  sequence: number;
   name: string;
   size: number;
   mimeType: string;
   kind: "image" | "document";
   previewUrl: string | null;
   serverUrl: string;
-  status: "uploading" | "uploaded" | "failed";
+  status: "preparing" | "uploading" | "uploaded" | "failed";
   progress: number;
 };
 
@@ -114,11 +116,18 @@ const initParticipants = (maps: ProjectActivityMap[], project: string): Particip
 
 const toUploadsFromEntry = (entry: ActivityEntry): Record<AttachmentCategory, UploadedItem[]> => {
   const files = createEmptyUploads();
-  entry.attachments.forEach((attachment) => {
+  entry.attachments.forEach((attachment, index) => {
     files[attachment.category].push({
       id: `existing-${attachment.id}`,
       attachmentId: attachment.id,
-      name: attachment.name,
+      sequence: index + 1,
+      name: buildAttachmentFileName(
+        entry.uniqueId,
+        entry.activityName,
+        index + 1,
+        attachment.name,
+        attachment.type === "image" ? "image/jpeg" : undefined
+      ),
       size: Math.max(1, attachment.sizeKb || 0) * 1024,
       mimeType: attachment.type === "image" ? "image/*" : "application/octet-stream",
       kind: attachment.type,
@@ -132,20 +141,24 @@ const toUploadsFromEntry = (entry: ActivityEntry): Record<AttachmentCategory, Up
 };
 
 const toAttachments = (
-  filesByCategory: Record<AttachmentCategory, UploadedItem[]>
+  filesByCategory: Record<AttachmentCategory, UploadedItem[]>,
+  uniqueId: string,
+  activityName: string
 ): ActivityAttachment[] => {
+  const orderedFiles = uploadCategories
+    .flatMap((category) => (filesByCategory[category] || []).map((item) => ({ category, item })))
+    .filter(({ item }) => item.status === "uploaded" && item.serverUrl)
+    .sort((left, right) => left.item.sequence - right.item.sequence);
+
   const list: ActivityAttachment[] = [];
-  uploadCategories.forEach((category) => {
-    (filesByCategory[category] || []).forEach((item) => {
-      if (item.status !== "uploaded" || !item.serverUrl) return;
-      list.push({
-        id: item.attachmentId || `file-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-        category,
-        name: item.name,
-        url: item.serverUrl,
-        type: item.kind,
-        sizeKb: Math.max(1, Math.round(item.size / 1024))
-      });
+  orderedFiles.forEach(({ category, item }) => {
+    list.push({
+      id: item.attachmentId || `file-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+      category,
+      name: buildAttachmentFileName(uniqueId, activityName, item.sequence, item.name, item.mimeType),
+      url: item.serverUrl,
+      type: item.kind,
+      sizeKb: Math.max(1, Math.round(item.size / 1024))
     });
   });
   return list;
@@ -217,6 +230,61 @@ const fileToDataUrl = (file: File) =>
     reader.onerror = () => reject(new Error("Failed to read file."));
     reader.readAsDataURL(file);
   });
+
+const loadImageElement = (url: string) =>
+  new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new window.Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Failed to load selected image."));
+    image.src = url;
+  });
+
+const optimizeImageForUpload = async (file: File) => {
+  if (!file.type.startsWith("image/") || file.size < 1_500_000) {
+    return file;
+  }
+
+  const sourceUrl = URL.createObjectURL(file);
+
+  try {
+    const image = await loadImageElement(sourceUrl);
+    const maxDimension = file.size > 6_000_000 ? 1920 : 2400;
+    const scale = Math.min(1, maxDimension / Math.max(image.width, image.height));
+    const width = Math.max(1, Math.round(image.width * scale));
+    const height = Math.max(1, Math.round(image.height * scale));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const context = canvas.getContext("2d");
+    if (!context) {
+      return file;
+    }
+
+    context.drawImage(image, 0, 0, width, height);
+
+    const outputType = file.type === "image/png" || file.type === "image/webp" ? "image/webp" : "image/jpeg";
+    const quality = outputType === "image/jpeg" ? (file.size > 7_000_000 ? 0.72 : 0.82) : 0.8;
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob((nextBlob) => resolve(nextBlob), outputType, quality);
+    });
+
+    if (!blob || blob.size >= file.size * 0.96) {
+      return file;
+    }
+
+    const nextExtension = getMimeExtension(outputType) || "jpg";
+    return new File([blob], replaceFileExtension(file.name, nextExtension), {
+      type: outputType,
+      lastModified: file.lastModified
+    });
+  } catch {
+    return file;
+  } finally {
+    URL.revokeObjectURL(sourceUrl);
+  }
+};
 
 const uploadFileToServer = (file: File, onProgress: (progress: number) => void) =>
   new Promise<UploadApiResponse>((resolve, reject) => {
@@ -356,14 +424,20 @@ export const NewActivityForm = () => {
   const generatedId = isEditMode && editEntry ? editEntry.uniqueId : buildId(entries, form.date);
 
   const allUploads = useMemo(() => uploadCategories.flatMap((category) => filesByCategory[category]), [filesByCategory]);
+  const uploadPreparing = allUploads.filter((item) => item.status === "preparing").length;
   const uploadInProgress = allUploads.filter((item) => item.status === "uploading").length;
   const uploadFailed = allUploads.filter((item) => item.status === "failed").length;
   const uploadCompleted = allUploads.filter((item) => item.status === "uploaded").length;
-  const hasPendingUploads = uploadInProgress > 0;
+  const hasPendingUploads = uploadPreparing + uploadInProgress > 0;
   const hasFailedUploads = uploadFailed > 0;
-  const uploadProgress = allUploads.length
-    ? Math.round(allUploads.reduce((sum, item) => sum + item.progress, 0) / allUploads.length)
-    : 0;
+  const uploadProgress = useMemo(() => {
+    if (!allUploads.length) return 0;
+    const raw = Math.round(
+      allUploads.reduce((sum, item) => sum + (item.status === "preparing" ? 0 : item.progress), 0) / allUploads.length
+    );
+    if (hasPendingUploads) return Math.max(1, Math.min(99, raw));
+    return Math.max(0, raw);
+  }, [allUploads, hasPendingUploads]);
 
   const addVenueChoice = (value: string) => {
     const item = value.trim();
@@ -457,20 +531,28 @@ export const NewActivityForm = () => {
     }));
   };
 
-  const uploadSingleFile = async (category: AttachmentCategory, file: File) => {
+  const uploadSingleFile = async (category: AttachmentCategory, sourceFile: File, sequence: number) => {
     const uploadId = `up-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
-    const isImage = file.type.startsWith("image/");
-    const previewUrl = isImage ? URL.createObjectURL(file) : null;
+    const isImage = sourceFile.type.startsWith("image/");
+    const previewUrl = isImage ? URL.createObjectURL(sourceFile) : null;
+    const initialName = buildAttachmentFileName(
+      generatedId,
+      form.activityName || "Activity",
+      sequence,
+      sourceFile.name,
+      sourceFile.type
+    );
 
     const initialItem: UploadedItem = {
       id: uploadId,
-      name: file.name,
-      size: file.size,
-      mimeType: file.type || "application/octet-stream",
+      sequence,
+      name: initialName,
+      size: sourceFile.size,
+      mimeType: sourceFile.type || "application/octet-stream",
       kind: isImage ? "image" : "document",
       previewUrl,
       serverUrl: "",
-      status: "uploading",
+      status: isImage && sourceFile.size >= 1_500_000 ? "preparing" : "uploading",
       progress: 0
     };
 
@@ -480,23 +562,44 @@ export const NewActivityForm = () => {
     }));
 
     try {
-      const result = await uploadFileToServer(file, (progress) => {
+      const preparedFile = await optimizeImageForUpload(sourceFile);
+      const uploadFile =
+        preparedFile.name === initialName
+          ? preparedFile
+          : new File(
+              [preparedFile],
+              replaceFileExtension(initialName, getMimeExtension(preparedFile.type) || getFileExtension(initialName)),
+              {
+                type: preparedFile.type || sourceFile.type || "application/octet-stream",
+                lastModified: preparedFile.lastModified
+              }
+            );
+
+      updateUploadItem(category, uploadId, {
+        status: "uploading",
+        name: uploadFile.name,
+        size: uploadFile.size,
+        mimeType: uploadFile.type || initialItem.mimeType,
+        progress: 0
+      });
+
+      const result = await uploadFileToServer(uploadFile, (progress) => {
         updateUploadItem(category, uploadId, { progress });
       });
 
       updateUploadItem(category, uploadId, {
         status: "uploaded",
         progress: 100,
-        name: result.name || file.name,
+        name: result.name || uploadFile.name,
         mimeType: result.mimeType || initialItem.mimeType,
         kind: result.type || initialItem.kind,
         serverUrl: result.url,
-        size: Math.max(1, (result.sizeKb || Math.round(file.size / 1024)) * 1024)
+        size: Math.max(1, (result.sizeKb || Math.round(uploadFile.size / 1024)) * 1024)
       });
     } catch (error) {
       if (isLocalDevHost()) {
         try {
-          const dataUrl = await fileToDataUrl(file);
+          const dataUrl = await fileToDataUrl(sourceFile);
           updateUploadItem(category, uploadId, {
             status: "uploaded",
             progress: 100,
@@ -513,15 +616,16 @@ export const NewActivityForm = () => {
         progress: 0,
         serverUrl: ""
       });
-      notify(`Upload failed: ${file.name}. Please retry.`, "error");
+      notify(`Upload failed: ${sourceFile.name}. Please retry.`, "error");
       console.error("Upload failed", error);
     }
   };
 
   const onFileChange = (category: AttachmentCategory, list: FileList | null) => {
     const files = list ? Array.from(list) : [];
-    files.forEach((file) => {
-      void uploadSingleFile(category, file);
+    const startSequence = allUploads.length;
+    files.forEach((file, index) => {
+      void uploadSingleFile(category, file, startSequence + index + 1);
     });
   };
 
@@ -563,7 +667,7 @@ export const NewActivityForm = () => {
       referenceLink: form.referenceLinks.filter((link) => link.trim() !== "").join(", "),
       notes: form.notes,
       aiReport: form.aiReport,
-      attachments: toAttachments(filesByCategory),
+      attachments: toAttachments(filesByCategory, existing?.uniqueId || generatedId, form.activityName),
       createdBy: existing?.createdBy || user?.username || "unknown",
       createdAt: existing?.createdAt || now,
       updatedAt: now,
@@ -1222,6 +1326,9 @@ export const NewActivityForm = () => {
                                   <span className="file-name-short" title={item.name}>
                                     {shortFileName(item.name, 10)}
                                   </span>
+                                  {item.status === "preparing" && (
+                                    <small className="text-muted d-block mt-1">Optimizing image before upload...</small>
+                                  )}
                                   {item.status === "uploading" && (
                                     <div className="progress premium-progress mt-1">
                                       <div className="progress-bar bg-info" style={{ width: `${item.progress}%` }} />
@@ -1259,6 +1366,7 @@ export const NewActivityForm = () => {
                       </div>
                       <p className="small text-muted mb-0 mt-2">
                         Uploaded {uploadCompleted}/{allUploads.length} file(s)
+                        {uploadPreparing ? ` | Preparing ${uploadPreparing}` : ""}
                         {uploadInProgress ? ` | Uploading ${uploadInProgress}` : ""}
                         {uploadFailed ? ` | Failed ${uploadFailed}` : ""}
                       </p>
@@ -1305,6 +1413,9 @@ export const NewActivityForm = () => {
                                 <div className="progress premium-progress">
                                   <div className="progress-bar bg-info" style={{ width: `${item.progress}%` }} />
                                 </div>
+                              )}
+                              {item.status === "preparing" && (
+                                <small className="text-muted d-block mb-1">Optimizing image before upload...</small>
                               )}
                               <div className="d-flex justify-content-between align-items-start gap-2">
                                 <span className="file-name-short" title={item.name}>

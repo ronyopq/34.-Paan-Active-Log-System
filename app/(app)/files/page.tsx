@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import Image from "next/image";
 import { useAppContext } from "@/components/providers/app-context";
+import { getEntryAttachmentsWithDisplayNames } from "@/lib/attachments";
 import { formatDate, normalizeText } from "@/lib/format";
 import { downloadAttachment, getAttachmentPreviewSrc, openAttachment } from "@/lib/file-actions";
 import { getFileIconClass } from "@/lib/file-icons";
@@ -24,7 +25,7 @@ export default function FilesPage() {
 
   const files = useMemo(() => {
     const list = visibleEntries.flatMap((entry) =>
-      entry.attachments.map((file) => ({
+      getEntryAttachmentsWithDisplayNames(entry).map((file) => ({
         ...file,
         entryId: entry.uniqueId,
         date: entry.date,

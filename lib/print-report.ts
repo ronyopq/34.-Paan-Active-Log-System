@@ -1,4 +1,5 @@
 import { ActivityEntry, PrintSetup } from "@/lib/types";
+import { getEntryAttachmentsWithDisplayNames } from "@/lib/attachments";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/format";
 import { jsPDF } from "jspdf";
 
@@ -76,6 +77,7 @@ const downloadBlob = (filename: string, blob: Blob) => {
 };
 
 export const buildEntryTextReport = (entry: ActivityEntry) => {
+  const displayAttachments = getEntryAttachmentsWithDisplayNames(entry);
   const nonZeroParticipants = entry.participants.filter((line) => line.male + line.female > 0);
   const participantLines = nonZeroParticipants.length
     ? [
@@ -93,8 +95,8 @@ export const buildEntryTextReport = (entry: ActivityEntry) => {
       ].join("\n")
     : "No participant rows with value greater than zero.";
 
-  const attachmentLines = entry.attachments.length
-    ? entry.attachments
+  const attachmentLines = displayAttachments.length
+    ? displayAttachments
         .map(
           (file, index) =>
             `${index + 1}. ${file.name} | Category: ${file.category} | Type: ${file.type} | Size: ${file.sizeKb} KB`
@@ -102,7 +104,7 @@ export const buildEntryTextReport = (entry: ActivityEntry) => {
         .join("\n")
     : "No attachments uploaded.";
 
-  const firstFourPhotos = entry.attachments.filter((file) => file.type === "image").slice(0, 4);
+  const firstFourPhotos = displayAttachments.filter((file) => file.type === "image").slice(0, 4);
   const photoGrid = firstFourPhotos.length
     ? [
         `${firstFourPhotos[0] ? `[1] ${firstFourPhotos[0].name}` : "[1] -"}`.padEnd(52, " ") +
@@ -152,7 +154,7 @@ export const buildEntryTextReport = (entry: ActivityEntry) => {
     "SECTION 6: FILES & ATTACHMENTS",
     attachmentLines,
     "",
-    `Total Attachments: ${entry.attachments.length}`,
+    `Total Attachments: ${displayAttachments.length}`,
     "",
     `SECTION 7: SOME PICTURES FROM "${entry.activityName}"`,
     "First 4 pictures shown in 2-column text layout:",
@@ -307,6 +309,7 @@ export const exportExecutivePdf = (entry: ActivityEntry) => {
  */
 export const exportPhotoPdf = async (entry: ActivityEntry) => {
   const doc = new jsPDF({ unit: "pt", format: "a4" });
+  const photos = getEntryAttachmentsWithDisplayNames(entry).filter((file) => file.type === "image").slice(0, 4);
   
   // Basic info on page 1
   doc.setFontSize(14);
@@ -318,8 +321,6 @@ export const exportPhotoPdf = async (entry: ActivityEntry) => {
   doc.text(narrative, 40, 100);
 
   // Photos on Page 2 or at end
-  const photos = entry.attachments.filter(a => a.type === 'image').slice(0, 4);
-  
   if (photos.length > 0) {
     doc.addPage();
     doc.setFontSize(12);

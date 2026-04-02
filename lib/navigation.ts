@@ -11,6 +11,7 @@ const userNav: NavItem[] = [
   { href: "/activities/new", label: "New Activity", icon: "bi-plus-circle" },
   { href: "/activities", label: "My Activity", icon: "bi-clipboard-data" },
   { href: "/calendar", label: "Calendar", icon: "bi-calendar3" },
+  { href: "/reports", label: "Report", icon: "bi-file-earmark-bar-graph" },
   { href: "/files", label: "Files", icon: "bi-folder" },
   { href: "/profile", label: "Profile", icon: "bi-person" },
   { href: "/logs/login", label: "Login Log", icon: "bi-clock-history" }
@@ -21,6 +22,7 @@ const managerNav: NavItem[] = [
   { href: "/activities", label: "My Activity", icon: "bi-clipboard-data" },
   { href: "/calendar", label: "Calendar", icon: "bi-calendar3" },
   { href: "/dashboard#analytics", label: "Analytics", icon: "bi-bar-chart" },
+  { href: "/reports", label: "Report", icon: "bi-file-earmark-bar-graph" },
   { href: "/files", label: "Files", icon: "bi-folder" },
   { href: "/notifications", label: "Notifications", icon: "bi-bell" },
   { href: "/logs/user", label: "User Log", icon: "bi-list-ul" },
@@ -33,6 +35,7 @@ const adminNav: NavItem[] = [
   { href: "/activities", label: "My Activity", icon: "bi-clipboard-data" },
   { href: "/calendar", label: "Calendar", icon: "bi-calendar3" },
   { href: "/dashboard#analytics", label: "Analytics", icon: "bi-bar-chart" },
+  { href: "/reports", label: "Report", icon: "bi-file-earmark-bar-graph" },
   { href: "/files", label: "Files", icon: "bi-folder" },
   { href: "/notifications", label: "Notifications", icon: "bi-bell" },
   { href: "/logs/user", label: "User Log", icon: "bi-list-ul" },

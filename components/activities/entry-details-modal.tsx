@@ -4,6 +4,7 @@ import clsx from "clsx";
 import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { ActivityEntry, ParticipantLine } from "@/lib/types";
+import { getEntryAttachmentsWithDisplayNames } from "@/lib/attachments";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/format";
 import { StatusBadge } from "@/components/common/status-badge";
 import { 
@@ -67,12 +68,12 @@ export const EntryDetailsModal = ({
 
   const groupedFiles = useMemo(
     () =>
-      draft.attachments.reduce<Record<string, ActivityEntry["attachments"]>>((acc, file) => {
+      getEntryAttachmentsWithDisplayNames(draft).reduce<Record<string, ActivityEntry["attachments"]>>((acc, file) => {
         if (!acc[file.category]) acc[file.category] = [];
         acc[file.category].push(file);
         return acc;
       }, {}),
-    [draft.attachments]
+    [draft]
   );
 
   const totals = useMemo(() => {
