@@ -7,7 +7,7 @@ import { useAppContext } from "@/components/providers/app-context";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login, notify } = useAppContext();
+  const { hydrated, login, notify, user } = useAppContext();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -17,6 +17,12 @@ export default function LoginPage() {
     const query = new URLSearchParams(window.location.search);
     setNextPath(query.get("next") || "/activities/new");
   }, []);
+
+  useEffect(() => {
+    if (hydrated && user) {
+      router.replace(nextPath);
+    }
+  }, [hydrated, nextPath, router, user]);
 
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();

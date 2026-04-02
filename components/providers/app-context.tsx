@@ -48,6 +48,7 @@ type RegisterInput = {
 type PopupTone = "success" | "error" | "info";
 
 type AppContextValue = {
+  hydrated: boolean;
   user: AppUser | null;
   users: AppUser[];
   loginLogs: LoginLog[];
@@ -613,10 +614,11 @@ export const AppContextProvider = ({ children }: { children: React.ReactNode }) 
   const unreadCount = notifications.filter((item) => item.unread).length;
 
   return (
-    <AppContext.Provider
-      value={{
-        user,
-        users,
+      <AppContext.Provider
+        value={{
+          hydrated,
+          user,
+          users,
         loginLogs,
         auditLogs,
         theme,
