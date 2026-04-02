@@ -1,6 +1,14 @@
 import { Pool } from "pg";
 
-const connectionString = (process.env.DATABASE_URL || "").trim();
+const normalizeConnectionString = (value: string) => {
+  const input = value.trim();
+  if (!input) return input;
+  if (!input.includes("sslmode=require")) return input;
+  if (input.includes("uselibpqcompat=true")) return input;
+  return input.replace("sslmode=require", "sslmode=verify-full");
+};
+
+const connectionString = normalizeConnectionString(process.env.DATABASE_URL || "");
 const poolSize = Number(process.env.DATABASE_POOL_MAX || 5);
 const useSsl =
   process.env.DATABASE_SSL === "0"
@@ -17,7 +25,7 @@ const createPool = () => {
 
   return new Pool({
     connectionString,
-    ssl: useSsl ? { rejectUnauthorized: false } : undefined,
+    ssl: useSsl ? { rejectUnauthorized: true } : undefined,
     max: Number.isFinite(poolSize) && poolSize > 0 ? poolSize : 5,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000
