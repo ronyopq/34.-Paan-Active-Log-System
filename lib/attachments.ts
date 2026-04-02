@@ -20,6 +20,15 @@ const sanitizeSegment = (value: string, fallback: string) => {
   return cleaned.slice(0, 64) || fallback;
 };
 
+const sanitizeIdSegment = (value: string) => {
+  const cleaned = String(value || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9-]+/g, "")
+    .replace(/-+/g, "-");
+
+  return cleaned || "PR";
+};
+
 export const getMimeExtension = (mimeType?: string) => {
   const key = String(mimeType || "").trim().toLowerCase();
   return mimeExtensionMap[key] || "";
@@ -47,7 +56,7 @@ export const buildAttachmentFileName = (
   sourceName: string,
   fallbackMimeType?: string
 ) => {
-  const safeId = sanitizeSegment(uniqueId, "PR");
+  const safeId = sanitizeIdSegment(uniqueId);
   const safeActivity = sanitizeSegment(activityName, "Activity");
   const safeSequence = String(Math.max(1, sequence)).padStart(2, "0");
   const extension = getFileExtension(sourceName, fallbackMimeType);
