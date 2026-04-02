@@ -78,6 +78,59 @@ export const summarizeEntries = (entries: ActivityEntry[]) => {
   };
 };
 
+export const entryExportHeaders = [
+  "ID",
+  "Status",
+  "Date",
+  "Project",
+  "Activity",
+  "ActivityCode",
+  "ActivityType",
+  "District",
+  "Upazila",
+  "Union",
+  "Venue",
+  "ImplementedBy",
+  "Participants",
+  "Male",
+  "Female",
+  "Budget",
+  "Expenses",
+  "VariancePercent",
+  "ReferenceLinks",
+  "Notes",
+  "AIReport",
+  "AttachmentCount",
+  "AttachmentNames",
+  "AttachmentLinks",
+  "ImageLinks",
+  "DocumentLinks",
+  "ImageNames",
+  "DocumentNames",
+  "CreatedBy",
+  "CreatedAt",
+  "UpdatedAt",
+  "SubmittedAt",
+  "ReviewedBy",
+  "ReviewedAt"
+] as const;
+
+export const attachmentExportHeaders = [
+  "EntryID",
+  "Date",
+  "Project",
+  "Activity",
+  "District",
+  "Upazila",
+  "Union",
+  "FileCategory",
+  "FileName",
+  "FileType",
+  "FileSizeKB",
+  "FileLink",
+  "ReferenceLinks"
+] as const;
+
 const toAttachmentSummary = (entry: ActivityEntry, kind?: "image" | "document") =>
   entry.attachments
     .filter((file) => (kind ? file.type === kind : true))
@@ -179,11 +232,10 @@ export const exportEntriesToCsv = (
   fileName = `${buildReportFileName("praan-export")}.csv`
 ) => {
   const rows = buildEntryExportRows(entries);
-  const headers = rows.length ? Object.keys(rows[0]) : ["ID"];
   const csv = [
-    headers,
+    entryExportHeaders,
     ...rows.map((row) =>
-      headers.map((header) => escapeCsvValue(row[header as keyof typeof row] ?? ""))
+      entryExportHeaders.map((header) => escapeCsvValue(row[header] ?? ""))
     )
   ]
     .map((line) => line.join(","))
@@ -212,10 +264,12 @@ export const exportEntriesReportToExcel = (
   );
   XLSX.utils.book_append_sheet(workbook, filterSheet, "Filters");
 
-  const dataSheet = XLSX.utils.json_to_sheet(buildEntryExportRows(entries));
+  const dataSheet = XLSX.utils.json_to_sheet(buildEntryExportRows(entries), { header: [...entryExportHeaders] });
   XLSX.utils.book_append_sheet(workbook, dataSheet, "Activities");
 
-  const attachmentSheet = XLSX.utils.json_to_sheet(buildAttachmentExportRows(entries));
+  const attachmentSheet = XLSX.utils.json_to_sheet(buildAttachmentExportRows(entries), {
+    header: [...attachmentExportHeaders]
+  });
   XLSX.utils.book_append_sheet(workbook, attachmentSheet, "Attachments");
 
   XLSX.writeFile(workbook, fileName);

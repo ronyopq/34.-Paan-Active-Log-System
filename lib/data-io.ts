@@ -1,5 +1,10 @@
 import * as XLSX from "xlsx";
-import { buildAttachmentExportRows, buildEntryExportRows } from "@/lib/reporting";
+import {
+  attachmentExportHeaders,
+  buildAttachmentExportRows,
+  buildEntryExportRows,
+  entryExportHeaders
+} from "@/lib/reporting";
 import { ActivityEntry } from "./types";
 import { PersistedState } from "./store";
 
@@ -8,8 +13,10 @@ import { PersistedState } from "./store";
  * includes file links as strings.
  */
 export const exportEntriesToExcel = (entries: ActivityEntry[], fileName = "pams_activities.xlsx") => {
-  const worksheet = XLSX.utils.json_to_sheet(buildEntryExportRows(entries));
-  const attachmentWorksheet = XLSX.utils.json_to_sheet(buildAttachmentExportRows(entries));
+  const worksheet = XLSX.utils.json_to_sheet(buildEntryExportRows(entries), { header: [...entryExportHeaders] });
+  const attachmentWorksheet = XLSX.utils.json_to_sheet(buildAttachmentExportRows(entries), {
+    header: [...attachmentExportHeaders]
+  });
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "Activities");
   XLSX.utils.book_append_sheet(workbook, attachmentWorksheet, "Attachments");
