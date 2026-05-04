@@ -39,6 +39,7 @@ type FormState = {
   date: string;
   project: string;
   activityName: string;
+  activityOther: string;
   activityCode: string;
   activityType: string;
   venue: string;
@@ -90,6 +91,7 @@ const createEmptyForm = (): FormState => ({
   date: todayIso,
   project: "",
   activityName: "",
+  activityOther: "",
   activityCode: "",
   activityType: "",
   venue: "",
@@ -210,6 +212,7 @@ const entryToForm = (entry: ActivityEntry): FormState => ({
   date: entry.date || todayIso,
   project: entry.project || "",
   activityName: entry.activityName || "",
+  activityOther: "",
   activityCode: entry.activityCode || "",
   activityType: entry.activityType || "",
   venue: entry.venue || "",
@@ -533,6 +536,7 @@ export const NewActivityForm = () => {
     setForm((prev) => ({
       ...prev,
       activityName: selected?.name || "",
+      activityOther: selected?.name === "Other" ? prev.activityOther : "",
       activityCode: selected?.code || "",
       activityType: selected?.type || ""
     }));
@@ -695,12 +699,14 @@ export const NewActivityForm = () => {
   const buildEntry = (status: EntryStatus): ActivityEntry => {
     const now = new Date().toISOString();
     const existing = isEditMode ? editEntry : null;
+    const resolvedActivityName =
+      form.activityName === "Other" ? form.activityOther.trim() || "Other" : form.activityName;
     return {
       uniqueId: existing?.uniqueId || buildId(entries, form.date),
       status,
       date: form.date,
       project: form.project,
-      activityName: form.activityName,
+      activityName: resolvedActivityName,
       activityType: form.activityType,
       activityCode: form.activityCode,
       venue: form.venue,
@@ -718,7 +724,7 @@ export const NewActivityForm = () => {
       referenceLink: form.referenceLinks.filter((link) => link.trim() !== "").join(", "),
       notes: form.notes,
       aiReport: form.aiReport,
-      attachments: toAttachments(filesByCategory, existing?.uniqueId || generatedId, form.activityName),
+      attachments: toAttachments(filesByCategory, existing?.uniqueId || generatedId, resolvedActivityName),
       createdBy: existing?.createdBy || user?.username || "unknown",
       createdAt: existing?.createdAt || now,
       updatedAt: now,
@@ -958,14 +964,27 @@ export const NewActivityForm = () => {
                     </div>
                     <div className="col-md-4">
                       <label className="form-label">Activity *</label>
-                      <SearchableSelect
+                      <select
+                        className="form-select premium-input"
                         value={form.activityName}
-                        onChange={setActivity}
-                        options={activityOptions}
-                        placeholder={selectedProjectMap ? "Select activity" : "Select project first"}
+                        onChange={(event) => setActivity(event.target.value)}
                         disabled={!selectedProjectMap}
-                        emptyMessage="No activity found"
-                      />
+                      >
+                        <option value="">{selectedProjectMap ? "Select activity" : "Select project first"}</option>
+                        {activityOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      {form.activityName === "Other" && (
+                        <input
+                          className="form-control premium-input mt-2"
+                          placeholder="Write other activity name"
+                          value={form.activityOther}
+                          onChange={(event) => setForm((prev) => ({ ...prev, activityOther: event.target.value }))}
+                        />
+                      )}
                     </div>
                     <div className="col-md-4">
                       <label className="form-label">Activity Code *</label>
@@ -1480,9 +1499,14 @@ export const NewActivityForm = () => {
                       <label className="form-label">Activity Notes / Observations</label>
                       <textarea
                         className="form-control premium-input"
-                        rows={4}
+                        rows={6}
                         value={form.notes}
                         onChange={(event) => setForm((prev) => ({ ...prev, notes: event.target.value }))}
+                        onInput={(event) => {
+                          const target = event.currentTarget;
+                          target.style.height = "auto";
+                          target.style.height = `${target.scrollHeight}px`;
+                        }}
                       />
                     </div>
                     <div className="col-12">
@@ -1510,6 +1534,11 @@ export const NewActivityForm = () => {
                           rows={6}
                           value={form.aiReport}
                           onChange={(event) => setForm((prev) => ({ ...prev, aiReport: event.target.value }))}
+                          onInput={(event) => {
+                            const target = event.currentTarget;
+                            target.style.height = "auto";
+                            target.style.height = `${target.scrollHeight}px`;
+                          }}
                         />
                         <button
                           className="text-btn mt-2"

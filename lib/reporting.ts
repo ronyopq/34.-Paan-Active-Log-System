@@ -92,6 +92,7 @@ export const entryExportHeaders = [
   "Venue",
   "ImplementedBy",
   "Participants",
+  "ParticipantDetails",
   "Male",
   "Female",
   "Budget",
@@ -165,6 +166,10 @@ export const buildEntryExportRows = (entries: ActivityEntry[]) =>
     Venue: entry.venue,
     ImplementedBy: entry.implementedBy,
     Participants: entry.grandTotal,
+    ParticipantDetails:
+      entry.participants
+        .map((line) => `${line.categoryLabel}: M${line.male}, F${line.female}, T${line.male + line.female}`)
+        .join(" | ") || "-",
     Male: entry.totalMale,
     Female: entry.totalFemale,
     Budget: entry.totalBudget,
