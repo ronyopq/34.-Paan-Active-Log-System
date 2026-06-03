@@ -1,7 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { EntryDetailsModal } from "@/components/activities/entry-details-modal";
 import { KpiCard } from "@/components/common/kpi-card";
+import { Pagination } from "@/components/common/pagination";
 import { useAppContext } from "@/components/providers/app-context";
 import { formatCurrency, formatDate } from "@/lib/format";
 import {
@@ -27,6 +29,12 @@ const createFilters = (): ReportFilters => ({
 export default function ReportsPage() {
   const { visibleEntries, orgSettings } = useAppContext();
   const [filters, setFilters] = useState<ReportFilters>(createFilters);
+  const [page, setPage] = useState(1);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPage(1);
+  }, [filters]);
 
   const projectOptions = useMemo(
     () => Array.from(new Set(visibleEntries.map((entry) => entry.project))).sort(),
@@ -97,6 +105,11 @@ export default function ReportsPage() {
 
   const updateFilter = <Key extends keyof ReportFilters>(key: Key, value: ReportFilters[Key]) =>
     setFilters((prev) => ({ ...prev, [key]: value }));
+
+  const pagedEntries = useMemo(() => {
+    const start = (page - 1) * 20;
+    return filteredEntries.slice(start, start + 20);
+  }, [filteredEntries, page]);
 
   return (
     <div className="d-grid gap-4">
@@ -311,9 +324,20 @@ export default function ReportsPage() {
             </tr>
           </thead>
           <tbody>
-            {filteredEntries.length ? (
-              filteredEntries.map((entry) => (
-                <tr key={entry.uniqueId}>
+            {pagedEntries.length ? (
+              pagedEntries.map((entry) => (
+                <tr
+                  key={entry.uniqueId}
+                  className="entry-row-clickable"
+                  onClick={() => setSelectedId(entry.uniqueId)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setSelectedId(entry.uniqueId);
+                    }
+                  }}
+                  tabIndex={0}
+                >
                   <td className="mono text-success fw-semibold">{entry.uniqueId}</td>
                   <td>{formatDate(entry.date)}</td>
                   <td>{entry.project}</td>
@@ -351,7 +375,19 @@ export default function ReportsPage() {
             )}
           </tbody>
         </table>
+        {filteredEntries.length > 0 && (
+          <div className="p-3 border-top bg-white">
+            <Pagination page={page} total={filteredEntries.length} pageSize={20} onPageChange={setPage} />
+          </div>
+        )}
       </section>
+
+      {selectedId && (
+        <EntryDetailsModal
+          entry={visibleEntries.find((e) => e.uniqueId === selectedId)!}
+          onClose={() => setSelectedId(null)}
+        />
+      )}
     </div>
   );
 }
