@@ -373,6 +373,7 @@ export const NewActivityForm = () => {
   const [savingDraft, setSavingDraft] = useState(false);
   const [successEntry, setSuccessEntry] = useState<ActivityEntry | null>(null);
   const [open, setOpen] = useState({ info: true, participants: true, financial: true, uploads: true });
+  const [isNotesFullscreen, setIsNotesFullscreen] = useState(false);
 
   useEffect(() => {
     if (!editId) {
@@ -482,26 +483,6 @@ export const NewActivityForm = () => {
     () => unionList.map((item) => ({ value: item, label: item })),
     [unionList]
   );
-
-  const venueSearchOptions = useMemo<SearchableOption[]>(
-    () => venueOptions.map((item) => ({ value: item, label: item })),
-    [venueOptions]
-  );
-
-  const implementedBySearchOptions = useMemo<SearchableOption[]>(
-    () => implementedByOptions.map((item) => ({ value: item, label: item })),
-    [implementedByOptions]
-  );
-
-  const addVenueChoice = (value: string) => {
-    const item = value.trim();
-    if (item && !venueOptions.includes(item)) setVenueOptions([...venueOptions, item]);
-  };
-
-  const addImplementedByChoice = (value: string) => {
-    const item = value.trim();
-    if (item && !implementedByOptions.includes(item)) setImplementedByOptions([...implementedByOptions, item]);
-  };
 
   const setProject = (project: string) => {
     if (!project) {
@@ -950,14 +931,19 @@ export const NewActivityForm = () => {
                     </div>
                     <div className="col-md-4">
                       <label className="form-label">Project *</label>
-                      <SearchableSelect
+                      <select
+                        className="form-select premium-input"
                         value={form.project}
-                        onChange={setProject}
-                        options={projectOptions}
-                        placeholder="Select project"
+                        onChange={(e) => setProject(e.target.value)}
                         disabled={!availableProjects.length}
-                        emptyMessage="No project found"
-                      />
+                      >
+                        <option value="">Select project</option>
+                        {projectOptions.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
                       {!availableProjects.length && (
                         <small className="text-danger">All projects are currently locked by admin.</small>
                       )}
@@ -992,59 +978,82 @@ export const NewActivityForm = () => {
                     </div>
                     <div className="col-md-6">
                       <label className="form-label">Venue *</label>
-                      <SearchableSelect
+                      <textarea
+                        className="form-control premium-input"
                         value={form.venue}
-                        onChange={(value) => setForm((prev) => ({ ...prev, venue: value }))}
-                        options={venueSearchOptions}
-                        placeholder="Search or type venue"
-                        allowCustomValue
-                        onCommitCustomValue={addVenueChoice}
-                        emptyMessage="No saved venue found"
+                        onChange={(e) => {
+                          const target = e.currentTarget;
+                          target.style.height = "auto";
+                          target.style.height = `${target.scrollHeight}px`;
+                          setForm((prev) => ({ ...prev, venue: e.target.value }));
+                        }}
+                        rows={1}
+                        placeholder="Type venue"
+                        style={{ overflow: "hidden", resize: "none" }}
                       />
                     </div>
                     <div className="col-md-6">
                       <label className="form-label">Implemented By *</label>
-                      <SearchableSelect
+                      <textarea
+                        className="form-control premium-input"
                         value={form.implementedBy}
-                        onChange={(value) => setForm((prev) => ({ ...prev, implementedBy: value }))}
-                        options={implementedBySearchOptions}
-                        placeholder="Search or type implementer"
-                        allowCustomValue
-                        onCommitCustomValue={addImplementedByChoice}
-                        emptyMessage="No saved implementer found"
+                        onChange={(e) => {
+                          const target = e.currentTarget;
+                          target.style.height = "auto";
+                          target.style.height = `${target.scrollHeight}px`;
+                          setForm((prev) => ({ ...prev, implementedBy: e.target.value }));
+                        }}
+                        rows={1}
+                        placeholder="Type implementer"
+                        style={{ overflow: "hidden", resize: "none" }}
                       />
                     </div>
                     <div className="col-md-4">
                       <label className="form-label">District *</label>
-                      <SearchableSelect
+                      <select
+                        className="form-select premium-input"
                         value={form.district}
-                        onChange={setDistrict}
-                        options={districtOptions}
-                        placeholder="Select district"
-                        emptyMessage="No district found"
-                      />
+                        onChange={(e) => setDistrict(e.target.value)}
+                      >
+                        <option value="">Select district</option>
+                        {districtOptions.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                     <div className="col-md-4">
                       <label className="form-label">Upazila *</label>
-                      <SearchableSelect
+                      <select
+                        className="form-select premium-input"
                         value={form.upazila}
-                        onChange={setUpazila}
-                        options={upazilaOptions}
-                        placeholder={upazilaList.length ? "Select upazila" : "Select district first"}
+                        onChange={(e) => setUpazila(e.target.value)}
                         disabled={!upazilaList.length}
-                        emptyMessage="No upazila found"
-                      />
+                      >
+                        <option value="">{upazilaList.length ? "Select upazila" : "Select district first"}</option>
+                        {upazilaOptions.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                     <div className="col-md-4">
                       <label className="form-label">Union *</label>
-                      <SearchableSelect
+                      <select
+                        className="form-select premium-input"
                         value={form.union}
-                        onChange={(value) => setForm((prev) => ({ ...prev, union: value }))}
-                        options={unionOptions}
-                        placeholder={unionList.length ? "Select union" : "Select upazila first"}
+                        onChange={(e) => setForm((prev) => ({ ...prev, union: e.target.value }))}
                         disabled={!unionList.length}
-                        emptyMessage="No union found"
-                      />
+                      >
+                        <option value="">{unionList.length ? "Select union" : "Select upazila first"}</option>
+                        {unionOptions.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </div>
                 </div>
@@ -1495,18 +1504,48 @@ export const NewActivityForm = () => {
                       </div>
                     </div>
                     
-                    <div className="col-12 mt-4">
-                      <label className="form-label">Activity Notes / Observations</label>
+                    <div
+                      className="col-12 mt-4"
+                      style={
+                        isNotesFullscreen
+                          ? {
+                              position: "fixed",
+                              top: 0,
+                              left: 0,
+                              right: 0,
+                              bottom: 0,
+                              zIndex: 9999,
+                              backgroundColor: "var(--background, #ffffff)",
+                              padding: "20px",
+                              display: "flex",
+                              flexDirection: "column",
+                            }
+                          : {}
+                      }
+                    >
+                      <div className="d-flex justify-content-between align-items-center mb-2">
+                        <label className="form-label mb-0">Activity Notes / Observations</label>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-secondary"
+                          onClick={() => setIsNotesFullscreen(!isNotesFullscreen)}
+                          title="Toggle Fullscreen"
+                        >
+                          <i className={isNotesFullscreen ? "bi bi-fullscreen-exit" : "bi bi-arrows-fullscreen"} />
+                        </button>
+                      </div>
                       <textarea
                         className="form-control premium-input"
-                        rows={6}
+                        rows={12}
                         value={form.notes}
                         onChange={(event) => setForm((prev) => ({ ...prev, notes: event.target.value }))}
                         onInput={(event) => {
+                          if (isNotesFullscreen) return;
                           const target = event.currentTarget;
                           target.style.height = "auto";
                           target.style.height = `${target.scrollHeight}px`;
                         }}
+                        style={isNotesFullscreen ? { flex: 1, resize: "none", height: "100%" } : {}}
                       />
                     </div>
                     <div className="col-12">
@@ -1531,7 +1570,7 @@ export const NewActivityForm = () => {
                         </div>
                         <textarea
                           className="form-control premium-input"
-                          rows={6}
+                          rows={12}
                           value={form.aiReport}
                           onChange={(event) => setForm((prev) => ({ ...prev, aiReport: event.target.value }))}
                           onInput={(event) => {
@@ -1569,67 +1608,6 @@ export const NewActivityForm = () => {
                 </button>
               </div>
             </article>
-          </div>
-        </section>
-
-        <section className="live-summary live-summary-below">
-          <div className="panel-card sticky-panel">
-            <h2 className="summary-title">
-              <i className="bi bi-journal-text" /> Live Summary
-            </h2>
-            <div className="summary-block">
-              <p className="summary-label">Participants</p>
-              <p className="summary-total">{grandTotal}</p>
-              <div className="gender-grid">
-                <div className="gender-pill male">
-                  <strong>{totalMale}</strong>
-                  <span>Male</span>
-                </div>
-                <div className="gender-pill female">
-                  <strong>{totalFemale}</strong>
-                  <span>Female</span>
-                </div>
-              </div>
-            </div>
-            <div className="summary-block">
-              <p className="summary-label">Financial</p>
-              <div className="summary-row">
-                <span>Budget</span>
-                <strong>{formatCurrency(budgetValue)}</strong>
-              </div>
-              <div className="summary-row">
-                <span>Expenses</span>
-                <strong className={clsx(expenseValue > budgetValue && "text-danger")}>{formatCurrency(expenseValue)}</strong>
-              </div>
-              <div className="summary-row border-top pt-2 mt-2">
-                <span>Variance</span>
-                <strong className={clsx(variance < 0 ? "text-danger" : "text-success")}>{variance.toFixed(1)}%</strong>
-              </div>
-              <div className="progress premium-progress mt-2">
-                <div
-                  className={clsx("progress-bar", utilization > 100 ? "bg-danger" : "bg-success")}
-                  style={{ width: `${Math.min(utilization, 100)}%` }}
-                />
-              </div>
-            </div>
-            <div className="summary-block">
-              <div className="summary-row">
-                <span>
-                  <i className="bi bi-paperclip" /> Attachments
-                </span>
-                <strong>{attachmentCount}</strong>
-              </div>
-              {(hasPendingUploads || hasFailedUploads) && (
-                <p className={clsx("small mb-0 mt-1", hasFailedUploads ? "text-danger" : "text-muted")}>
-                  {hasFailedUploads
-                    ? "Some files failed to upload."
-                    : `Uploading ${uploadInProgress} file(s)...`}
-                </p>
-              )}
-            </div>
-            <p className="summary-note">
-              <i className="bi bi-info-circle" /> Complete all sections and confirm before submitting.
-            </p>
           </div>
         </section>
       </form>
