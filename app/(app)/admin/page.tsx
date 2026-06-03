@@ -4,9 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { printTemplatePreview } from "@/lib/print-report";
 import { useAppContext } from "@/components/providers/app-context";
 import { AppUser, LocationMap, ProjectActivityMap, ThemeMode } from "@/lib/types";
-import { exportEntriesToExcel, exportStateAsJson, exportSettingsAsJson, readJsonFile, readExcelFile } from "@/lib/data-io";
+import { exportEntriesToExcel, exportStateAsJson, exportSettingsAsJson, readJsonFile, readExcelFile, exportFullBackup, parseBackupFile, restoreFromBackup } from "@/lib/data-io";
+import { ActivityEntry, BackupManifest } from "@/lib/types";
 import { PersistedState } from "@/lib/store";
-import { ActivityEntry } from "@/lib/types";
 
 type Tab = "org" | "projects" | "locations" | "participants" | "reports" | "users" | "themes" | "danger" | "data";
 type UserForm = {
@@ -134,6 +134,7 @@ export default function AdminPage() {
     addAuditLog,
     notify,
     wipeSystemData,
+    restoreState,
     getFullState
   } = useAppContext();
 
@@ -152,6 +153,9 @@ export default function AdminPage() {
 
   const [tab, setTab] = useState<Tab>("org");
   const [orgName, setOrgName] = useState(orgSettings.orgName);
+  const [orgAddress, setOrgAddress] = useState(orgSettings.orgAddress || "");
+  const [orgPhone, setOrgPhone] = useState(orgSettings.orgPhone || "");
+  const [orgEmail, setOrgEmail] = useState(orgSettings.orgEmail || "");
   const [logoUrl, setLogoUrl] = useState(orgSettings.logoUrl);
   const [projects, setProjects] = useState<ProjectActivityMap[]>(cloneProjects(appProjectMap));
   const [projectIdx, setProjectIdx] = useState(0);
@@ -165,6 +169,8 @@ export default function AdminPage() {
   const [editUser, setEditUser] = useState<string | null>(null);
   const [userForm, setUserForm] = useState<UserForm>(emptyUser);
   const [wipePassword, setWipePassword] = useState("");
+  const [backupPreview, setBackupPreview] = useState<BackupManifest | null>(null);
+  const [restoreLoading, setRestoreLoading] = useState(false);
 
   const [newProject, setNewProject] = useState("");
   const [newActivity, setNewActivity] = useState("");
@@ -189,7 +195,7 @@ export default function AdminPage() {
   const selectedDistrict = locationEditor[selectedDistrictIdx];
   const selectedUpazila = selectedDistrict?.upazilas[selectedUpazilaIdx];
 
-  useEffect(() => setOrgName(orgSettings.orgName), [orgSettings.orgName]);
+  useEffect(() => { setOrgName(orgSettings.orgName); setOrgAddress(orgSettings.orgAddress || ""); setOrgPhone(orgSettings.orgPhone || ""); setOrgEmail(orgSettings.orgEmail || ""); }, [orgSettings.orgName, orgSettings.orgAddress, orgSettings.orgPhone, orgSettings.orgEmail]);
   useEffect(() => setLogoUrl(orgSettings.logoUrl), [orgSettings.logoUrl]);
   useEffect(() => setProjects(cloneProjects(appProjectMap)), [appProjectMap]);
   useEffect(() => setLocationEditor(cloneLocations(appLocationMap)), [appLocationMap]);
@@ -239,7 +245,13 @@ export default function AdminPage() {
   }
 
   const persistOrganization = (silent = false) => {
-    setOrgSettings({ orgName: orgName.trim() || "PRAAN", logoUrl: logoUrl.trim() || "/logo.svg" });
+    setOrgSettings({
+      orgName: orgName.trim() || "PRAAN",
+      orgAddress: orgAddress.trim(),
+      orgPhone: orgPhone.trim(),
+      orgEmail: orgEmail.trim(),
+      logoUrl: logoUrl.trim() || "/logo.svg"
+    });
     addAuditLog("Updated Organization", "Settings", "org", "Updated organization details");
     if (!silent) notify("Organization settings saved successfully.", "success");
   };
@@ -527,8 +539,8 @@ export default function AdminPage() {
     <div className="d-grid gap-3">
       <section className="page-heading d-flex justify-content-between flex-wrap gap-2">
         <div>
-          <h1 className="page-title">Settings Workspace</h1>
-          <p className="page-subtitle">Project, report, user, location, participant, and theme management.</p>
+          <h1 className="page-title">Settings</h1>
+          <p className="page-subtitle">Manage projects, locations, users, reports, and system data.</p>
         </div>
         <button className="primary-btn" onClick={saveAll}>
           <i className="bi bi-save" /> Save All Changes
@@ -536,406 +548,414 @@ export default function AdminPage() {
       </section>
 
       <section className="admin-layout-grid">
-        <article className="panel-card">
-          <h2 className="h5 mb-3">Settings</h2>
+        <article className="admin-nav-card">
+          <div className="admin-nav-header">
+            <h2>Settings</h2>
+          </div>
           <nav className="settings-nav">
-            <button className={`settings-nav-btn ${tab === "org" ? "active" : ""}`} onClick={() => setTab("org")}>Organization</button>
-            <button className={`settings-nav-btn ${tab === "projects" ? "active" : ""}`} onClick={() => setTab("projects")}>Project Settings</button>
-            <button className={`settings-nav-btn ${tab === "locations" ? "active" : ""}`} onClick={() => setTab("locations")}>Location Mapping</button>
-            <button className={`settings-nav-btn ${tab === "participants" ? "active" : ""}`} onClick={() => setTab("participants")}>Participant Management</button>
-            <button className={`settings-nav-btn ${tab === "reports" ? "active" : ""}`} onClick={() => setTab("reports")}>Report + Print Setup</button>
-            <button className={`settings-nav-btn ${tab === "users" ? "active" : ""}`} onClick={() => setTab("users")}>User Management</button>
-            <button className={`settings-nav-btn ${tab === "themes" ? "active" : ""}`} onClick={() => setTab("themes")}>Theme Panel</button>
-            <button className={`settings-nav-btn ${tab === "data" ? "active" : ""}`} onClick={() => setTab("data")}>Data Management</button>
-            <button className={`settings-nav-btn text-danger fw-bold ${tab === "danger" ? "active" : ""}`} onClick={() => setTab("danger")}>System Danger Zone</button>
+            <button className={`settings-nav-btn ${tab === "org" ? "active" : ""}`} onClick={() => setTab("org")}><i className="bi bi-building" />Organization</button>
+            <button className={`settings-nav-btn ${tab === "projects" ? "active" : ""}`} onClick={() => setTab("projects")}><i className="bi bi-diagram-3" />Projects</button>
+            <button className={`settings-nav-btn ${tab === "locations" ? "active" : ""}`} onClick={() => setTab("locations")}><i className="bi bi-geo-alt" />Locations</button>
+            <button className={`settings-nav-btn ${tab === "participants" ? "active" : ""}`} onClick={() => setTab("participants")}><i className="bi bi-people" />Participants</button>
+            <button className={`settings-nav-btn ${tab === "reports" ? "active" : ""}`} onClick={() => setTab("reports")}><i className="bi bi-file-text" />Reports</button>
+            <button className={`settings-nav-btn ${tab === "users" ? "active" : ""}`} onClick={() => setTab("users")}><i className="bi bi-person-badge" />Users</button>
+            <button className={`settings-nav-btn ${tab === "themes" ? "active" : ""}`} onClick={() => setTab("themes")}><i className="bi bi-palette" />Themes</button>
+            <button className={`settings-nav-btn ${tab === "data" ? "active" : ""}`} onClick={() => setTab("data")}><i className="bi bi-database" />Data</button>
+            <button className={`settings-nav-btn text-danger ${tab === "danger" ? "active" : ""}`} onClick={() => setTab("danger")}><i className="bi bi-exclamation-triangle" />Danger Zone</button>
           </nav>
         </article>
         <div className="d-grid gap-3">
           {tab === "data" && (
-            <article className="panel-card settings-section">
-              <h3 className="h5 mb-3">Data Management (Import / Export)</h3>
-              
-              <div className="row g-4">
-                {/* Export Column */}
-                <div className="col-md-6 border-end">
-                  <h4 className="h6 mb-3 fw-bold text-primary"><i className="bi bi-download" /> Export Data</h4>
+            <article className="settings-section">
+              <div className="settings-section-head">
+                <h3><i className="bi bi-database" /> Data Management</h3>
+              </div>
+              <div className="admin-export-grid">
+                <div className="admin-export-card">
+                  <h4 className="text-primary"><i className="bi bi-download" /> Export</h4>
                   <div className="d-grid gap-2">
-                    <button className="outline-btn text-start w-100" onClick={() => exportEntriesToExcel(entries)}>
-                       <i className="bi bi-file-earmark-excel" /> Export All Activities to Excel
+                    <button className="outline-btn" onClick={() => exportEntriesToExcel(entries, orgSettings)}>
+                      <i className="bi bi-file-earmark-excel" /> Activities to Excel
                     </button>
-                    <button className="outline-btn text-start w-100" onClick={() => exportStateAsJson(getFullState())}>
-                       <i className="bi bi-file-earmark-code" /> Full Database Backup (JSON)
+                    <button className="outline-btn" onClick={async () => {
+                      try {
+                        await exportFullBackup(getFullState(), orgSettings.orgName);
+                        notify("Full backup with images downloaded.", "success");
+                      } catch (err: any) {
+                        notify(err.message || "Backup failed", "error");
+                      }
+                    }}>
+                      <i className="bi bi-cloud-arrow-down" /> Full Backup (with Images)
                     </button>
-                    <button className="outline-btn text-start w-100" onClick={() => exportSettingsAsJson(getFullState())}>
-                       <i className="bi bi-gear" /> Only Settings Backup (JSON)
+                    <button className="outline-btn" onClick={() => exportStateAsJson(getFullState())}>
+                      <i className="bi bi-file-earmark-code" /> Database Only (JSON)
+                    </button>
+                    <button className="outline-btn" onClick={() => exportSettingsAsJson(getFullState())}>
+                      <i className="bi bi-gear" /> Settings Only
                     </button>
                   </div>
                 </div>
-
-                {/* Import Column */}
-                <div className="col-md-6">
-                  <h4 className="h6 mb-3 fw-bold text-success"><i className="bi bi-upload" /> Import Data</h4>
+                <div className="admin-export-card">
+                  <h4 className="text-success"><i className="bi bi-upload" /> Import &amp; Restore</h4>
                   <div className="d-grid gap-3">
-                    <div>
-                      <label className="form-label small">Import Backup File (.json)</label>
-                      <input 
-                        type="file" 
-                        accept=".json" 
-                        className="form-control premium-input form-control-sm" 
-                        onChange={async (e) => {
-                          const file = e.target.files?.[0];
-                          if (file) {
-                            try {
-                              const data = await readJsonFile(file);
-                              applyImportedState(data);
-                              e.target.value = "";
-                            } catch (err: any) {
-                              notify(err.message, "error");
-                            }
-                          }
-                        }}
-                      />
+                    <div className="admin-field">
+                      <label className="form-label">Restore Full Backup (.json)</label>
+                      <input type="file" accept=".json" className="form-control premium-input form-control-sm" onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          try {
+                            const data = await readJsonFile(file);
+                            const manifest = parseBackupFile(data);
+                            setBackupPreview(manifest);
+                          } catch (err: any) { notify(err.message, "error"); }
+                        }
+                        e.target.value = "";
+                      }} />
                     </div>
-                    <div>
-                      <label className="form-label small">Import Activities from Excel (.xlsx)</label>
-                      <input 
-                        type="file" 
-                        accept=".xlsx, .xls" 
-                        className="form-control premium-input form-control-sm" 
-                        onChange={async (e) => {
-                          const file = e.target.files?.[0];
-                          if (file) {
-                            try {
-                              const data = await readExcelFile(file);
-                              // Simple mapping attempt or just notify for now
-                              console.log("Excel data imported:", data);
-                              notify(`Read ${data.length} rows from Excel. (Manual mapping logic required if headers mismatch)`, "info");
-                              e.target.value = "";
-                            } catch (err: any) {
-                              notify(err.message, "error");
-                            }
-                          }
-                        }}
-                      />
+                    <button className="outline-btn" onClick={() => {
+                      const fileInput = document.createElement("input");
+                      fileInput.type = "file";
+                      fileInput.accept = ".json";
+                      fileInput.onchange = async () => {
+                        const file = fileInput.files?.[0];
+                        if (file) {
+                          try {
+                            const data = await readJsonFile(file);
+                            const parsed = parseBackupFile(data);
+                            applyImportedState(parsed.state);
+                          } catch (err: any) { notify(err.message, "error"); }
+                        }
+                      };
+                      fileInput.click();
+                    }}>
+                      <i className="bi bi-arrow-left-circle" /> Restore Database (no images)
+                    </button>
+                    <div className="admin-field">
+                      <label className="form-label">Import Excel (.xlsx)</label>
+                      <input type="file" accept=".xlsx, .xls" className="form-control premium-input form-control-sm" onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          try {
+                            const data = await readExcelFile(file);
+                            notify(`Read ${data.length} rows from Excel.`, "info");
+                          } catch (err: any) { notify(err.message, "error"); }
+                        }
+                        e.target.value = "";
+                      }} />
                     </div>
                   </div>
                 </div>
               </div>
             </article>
           )}
-          {tab === "danger" && (
-            <article className="panel-card settings-section bg-danger-subtle border-danger">
-              <h3 className="h5 mb-3 text-danger"><i className="bi bi-exclamation-triangle-fill" /> System Reset (Danger Zone)</h3>
-              <p className="text-danger fw-medium">
-                Warning: Wiping the system data will permanently delete ALL activities, notifications, and logs! Admin users and settings will remain intact. This action cannot be undone!
-              </p>
-              <div className="admin-kv-grid mb-3">
-                <div>
-                  <label className="form-label text-danger">Enter your Admin Password to confirm:</label>
-                  <input
-                    type="password"
-                    className="form-control premium-input border-danger"
-                    placeholder="Provide admin password"
-                    value={wipePassword}
-                    onChange={(e) => setWipePassword(e.target.value)}
-                  />
+          {backupPreview && (
+            <div className="modal-overlay" role="dialog" aria-modal="true">
+              <div className="panel-card" style={{ maxWidth: 480, padding: "1.25rem", borderRadius: 16 }}>
+                <div className="mb-3">
+                  <h4 className="mb-1">
+                    <i className="bi bi-cloud-arrow-up text-success" /> Restore Backup
+                  </h4>
+                  <p className="text-muted small mb-0">
+                    This will replace all current data with the backup contents.
+                    Current data will be lost. This action <strong>cannot</strong> be undone.
+                  </p>
+                </div>
+                <div className="d-grid gap-2 mb-3">
+                  <div className="d-flex justify-content-between">
+                    <span className="text-muted">Exported</span>
+                    <span>{new Date(backupPreview.exportedAt).toLocaleString("en-GB")}</span>
+                  </div>
+                  <div className="d-flex justify-content-between">
+                    <span className="text-muted">Organization</span>
+                    <span>{backupPreview.orgName}</span>
+                  </div>
+                  <div className="d-flex justify-content-between">
+                    <span className="text-muted">Entries</span>
+                    <span>{backupPreview.entryCount}</span>
+                  </div>
+                  <div className="d-flex justify-content-between">
+                    <span className="text-muted">Images</span>
+                    <span>{backupPreview.imageCount}</span>
+                  </div>
+                </div>
+                <div className="d-flex gap-2">
+                  <button className="outline-btn flex-fill" onClick={() => setBackupPreview(null)}>
+                    Cancel
+                  </button>
+                  <button className="danger-btn flex-fill" disabled={restoreLoading} onClick={async () => {
+                    setRestoreLoading(true);
+                    try {
+                      const restored = restoreFromBackup(backupPreview);
+                      restoreState(restored);
+                      addAuditLog("Restored Backup", "Settings", "backup", `Restored ${backupPreview.entryCount} entries, ${backupPreview.imageCount} images`);
+                      notify(`Backup restored successfully (${backupPreview.entryCount} entries, ${backupPreview.imageCount} images).`, "success");
+                      setBackupPreview(null);
+                    } catch (err: any) {
+                      notify(err.message || "Restore failed", "error");
+                    }
+                    setRestoreLoading(false);
+                  }}>
+                    {restoreLoading ? "Restoring..." : "Restore Backup"}
+                  </button>
                 </div>
               </div>
-              <div>
-                <button
-                  className="danger-btn w-100"
-                  onClick={() => {
-                    const res = wipeSystemData(wipePassword);
-                    if (!res.ok) notify(res.message || "Wipe failed", "error");
-                    else setWipePassword("");
-                  }}
-                  disabled={!wipePassword}
-                >
-                  Confirm and Wipe Database
-                </button>
+            </div>
+          )}
+          {tab === "danger" && (
+            <article className="admin-danger-card">
+              <div className="settings-section-head" style={{borderBottomColor:"color-mix(in srgb, var(--danger) 30%, transparent)"}}>
+                <h3 style={{color:"var(--danger)"}}><i className="bi bi-exclamation-triangle-fill" /> Danger Zone</h3>
+              </div>
+              <p className="fw-medium mb-3" style={{color:"var(--danger)"}}>
+                <i className="bi bi-info-circle" /> Wiping system data permanently deletes ALL activities, notifications, and logs. Admin accounts and settings remain safe. This action <strong>cannot</strong> be undone.
+              </p>
+              <div className="row g-3 align-items-end">
+                <div className="col-md-6">
+                  <div className="admin-field">
+                    <label className="form-label" style={{color:"var(--danger)"}}>Confirm with Admin Password</label>
+                    <input type="password" className="form-control premium-input" style={{borderColor:"var(--danger)"}} placeholder="Enter your admin password" value={wipePassword} onChange={(e) => setWipePassword(e.target.value)} />
+                  </div>
+                </div>
+                <div className="col-md-6 d-flex align-items-end">
+                  <button className="danger-btn w-100" onClick={() => { const res = wipeSystemData(wipePassword); if (!res.ok) notify(res.message || "Wipe failed", "error"); else setWipePassword(""); }} disabled={!wipePassword}>
+                    <i className="bi bi-trash3" /> Wipe System Data
+                  </button>
+                </div>
               </div>
             </article>
           )}
           {tab === "org" && (
-            <article className="panel-card settings-section">
-              <h3 className="h5 mb-3">Organization</h3>
-              <div className="admin-kv-grid">
-                <div><label className="form-label">ORG_NAME</label><input className="form-control premium-input" value={orgName} onChange={(e) => setOrgName(e.target.value)} /></div>
-                <div><label className="form-label">LOGO_URL</label><input className="form-control premium-input" value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)} /></div>
+            <article className="settings-section">
+              <div className="settings-section-head">
+                <h3><i className="bi bi-building" /> Organization</h3>
+                <div className="admin-action-bar">
+                  <button className="primary-btn" onClick={() => persistOrganization()}>Save</button>
+                </div>
               </div>
-              <div className="mt-3"><button className="primary-btn" onClick={() => persistOrganization()}>Save</button></div>
+              <div className="admin-kv-grid">
+                <div className="admin-field">
+                  <label className="form-label"><i className="bi bi-tag" /> Organization Name</label>
+                  <input className="form-control premium-input" value={orgName} onChange={(e) => setOrgName(e.target.value)} placeholder="e.g. PRAAN" />
+                </div>
+                <div className="admin-field">
+                  <label className="form-label"><i className="bi bi-geo-alt" /> Address</label>
+                  <input className="form-control premium-input" value={orgAddress} onChange={(e) => setOrgAddress(e.target.value)} placeholder="e.g. Dhaka, Bangladesh" />
+                </div>
+                <div className="admin-field">
+                  <label className="form-label"><i className="bi bi-telephone" /> Phone</label>
+                  <input className="form-control premium-input" value={orgPhone} onChange={(e) => setOrgPhone(e.target.value)} placeholder="e.g. +880 1700-000000" />
+                </div>
+                <div className="admin-field">
+                  <label className="form-label"><i className="bi bi-envelope" /> Email</label>
+                  <input className="form-control premium-input" value={orgEmail} onChange={(e) => setOrgEmail(e.target.value)} placeholder="e.g. info@praan.org" />
+                </div>
+                <div className="admin-field">
+                  <label className="form-label"><i className="bi bi-image" /> Logo URL</label>
+                  <input className="form-control premium-input" value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)} placeholder="e.g. /logo.svg" />
+                </div>
+              </div>
             </article>
           )}
           {tab === "projects" && (
-            <article className="panel-card settings-section">
-              <h3 className="h5 mb-3">Project - Activity - Code</h3>
-              <div className="row g-3">
+            <article className="settings-section">
+              <div className="settings-section-head">
+                <h3><i className="bi bi-diagram-3" /> Projects &amp; Activities</h3>
+                <div className="admin-action-bar">
+                  <button className="primary-btn" onClick={() => persistProjects()}>Save</button>
+                </div>
+              </div>
+
+              <div className="row g-3 mb-3">
                 <div className="col-md-4">
-                  <label className="form-label">Projects</label>
-                  <select
-                    className="form-select premium-input"
-                    value={currentProject?.project || ""}
-                    onChange={(e) => setProjectIdx(Math.max(projectNames.indexOf(e.target.value), 0))}
-                  >
-                    {projectNames.map((n) => (
-                      <option key={n}>{n}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="col-md-4">
-                  <label className="form-label">Project Name</label>
-                  <input
-                    className="form-control premium-input"
-                    value={currentProject?.project || ""}
-                    onChange={(e) => updateProjectName(e.target.value)}
-                  />
-                </div>
-                <div className="col-md-4 d-flex align-items-end gap-2">
-                  <button className="outline-btn flex-fill" onClick={toggleProjectLock} disabled={!currentProject}>
-                    <i className={`bi ${currentProject?.locked ? "bi-unlock" : "bi-lock"}`} />{" "}
-                    {currentProject?.locked ? "Unlock Project" : "Lock Project"}
-                  </button>
-                  <button className="danger-outline flex-fill" onClick={deleteProject} disabled={!currentProject}>
-                    <i className="bi bi-trash" /> Delete
-                  </button>
-                </div>
-                <div className="col-md-6">
-                  <label className="form-label">Add Project</label>
-                  <div className="d-flex gap-2">
-                    <input
-                      className="form-control premium-input"
-                      value={newProject}
-                      onChange={(e) => setNewProject(e.target.value)}
-                    />
-                    <button className="outline-btn" onClick={addProject}>
-                      Add
-                    </button>
+                  <div className="admin-field">
+                    <label className="form-label">Select Project</label>
+                    <div className="admin-option-group">
+                      {projectNames.map((n) => (
+                        <button key={n} className={`admin-chip ${currentProject?.project === n ? "active" : ""}`} onClick={() => setProjectIdx(projectNames.indexOf(n))}>{n}</button>
+                      ))}
+                    </div>
                   </div>
                 </div>
-                <div className="col-md-6 d-flex align-items-end">
-                  {currentProject && (
-                    <span className={`soft-badge ${currentProject.locked ? "text-danger" : "text-success"}`}>
-                      Project status: {currentProject.locked ? "Locked" : "Unlocked"}
-                    </span>
-                  )}
+                <div className="col-md-4">
+                  <div className="admin-field">
+                    <label className="form-label">Project Name</label>
+                    <input className="form-control premium-input" value={currentProject?.project || ""} onChange={(e) => updateProjectName(e.target.value)} />
+                  </div>
                 </div>
+                <div className="col-md-4">
+                  <div className="admin-field">
+                    <label className="form-label">Status</label>
+                    <div className="admin-action-bar pt-1">
+                      <button className={`admin-chip ${currentProject?.locked ? "active" : ""}`} onClick={toggleProjectLock} disabled={!currentProject}>
+                        <i className={`bi ${currentProject?.locked ? "bi-lock" : "bi-unlock"}`} /> {currentProject?.locked ? "Locked" : "Active"}
+                      </button>
+                      <button className="admin-chip text-danger" onClick={deleteProject} disabled={!currentProject}>
+                        <i className="bi bi-trash" /> Delete
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="col-md-6">
+                  <div className="admin-field">
+                    <label className="form-label">Add New Project</label>
+                    <div className="d-flex gap-2">
+                      <input className="form-control premium-input" value={newProject} onChange={(e) => setNewProject(e.target.value)} placeholder="Project name" />
+                      <button className="outline-btn" onClick={addProject}>Add</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
 
-                <div className="col-md-5">
-                  <label className="form-label">Activity</label>
-                  <input className="form-control premium-input" value={newActivity} onChange={(e) => setNewActivity(e.target.value)} />
+              <div className="row g-2 mb-3">
+                <div className="col-12"><hr className="my-2" /><label className="form-label fw-bold">Add Activity</label></div>
+                <div className="col-md-4">
+                  <input className="form-control premium-input" value={newActivity} onChange={(e) => setNewActivity(e.target.value)} placeholder="Activity name" />
                 </div>
                 <div className="col-md-3">
-                  <label className="form-label">Code</label>
-                  <input className="form-control premium-input" value={newCode} onChange={(e) => setNewCode(e.target.value)} />
+                  <input className="form-control premium-input mono" value={newCode} onChange={(e) => setNewCode(e.target.value)} placeholder="Activity code" />
                 </div>
                 <div className="col-md-2">
-                  <label className="form-label">Type</label>
                   <select className="form-select premium-input" value={newType} onChange={(e) => setNewType(e.target.value)}>
-                    <option>Training</option>
-                    <option>Workshop</option>
-                    <option>Meeting</option>
-                    <option>Distribution</option>
-                    <option>Campaign</option>
+                    <option>Training</option><option>Workshop</option><option>Meeting</option><option>Distribution</option><option>Campaign</option>
                   </select>
                 </div>
-                <div className="col-md-2 d-flex align-items-end">
-                  <button className="outline-btn w-100" onClick={addActivity}>
-                    Add Activity
-                  </button>
+                <div className="col-md-3 d-flex align-items-end">
+                  <button className="outline-btn w-100" onClick={addActivity}><i className="bi bi-plus-lg" /> Add Activity</button>
                 </div>
               </div>
-              <div className="table-responsive mt-3">
-                <table className="table premium-table mb-0">
-                  <thead>
-                    <tr>
-                      <th>Activity</th>
-                      <th>Code</th>
-                      <th>Type</th>
-                      <th>Lock</th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {currentProject?.activities.map((activity, idx) => (
-                      <tr key={`${activity.code}-${idx}`}>
-                        <td>
-                          <input
-                            className="form-control premium-input"
-                            value={activity.name}
-                            onChange={(e) => updateActivityField(idx, "name", e.target.value)}
-                          />
-                        </td>
-                        <td>
-                          <input
-                            className="form-control premium-input mono"
-                            value={activity.code}
-                            onChange={(e) => updateActivityField(idx, "code", e.target.value)}
-                          />
-                        </td>
-                        <td>
-                          <input
-                            className="form-control premium-input"
-                            value={activity.type}
-                            onChange={(e) => updateActivityField(idx, "type", e.target.value)}
-                          />
-                        </td>
-                        <td>
-                          <button className="outline-btn" onClick={() => toggleActivityLock(idx)}>
-                            <i className={`bi ${activity.locked ? "bi-unlock" : "bi-lock"}`} />
-                            {activity.locked ? "Unlock" : "Lock"}
-                          </button>
-                        </td>
-                        <td className="text-end">
-                          <button className="danger-outline" onClick={() => deleteActivity(idx)}>
-                            <i className="bi bi-trash" /> Delete
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                    {!currentProject?.activities.length && (
+
+              {(!currentProject?.activities.length) ? (
+                <div className="admin-empty-state">
+                  <i className="bi bi-inbox" />
+                  <p className="mb-0">No activities added for this project.</p>
+                </div>
+              ) : (
+                <div className="admin-table-wrap">
+                  <table className="table premium-table mb-0">
+                    <thead>
                       <tr>
-                        <td colSpan={5} className="text-muted">
-                          No activities added for this project.
-                        </td>
+                        <th>Activity</th>
+                        <th>Code</th>
+                        <th>Type</th>
+                        <th style={{width:100}}>Lock</th>
+                        <th style={{width:80}} />
                       </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-              <div className="mt-3">
-                <button className="primary-btn" onClick={() => persistProjects()}>
-                  Save
-                </button>
-              </div>
+                    </thead>
+                    <tbody>
+                      {currentProject?.activities.map((activity, idx) => (
+                        <tr key={`${activity.code}-${idx}`}>
+                          <td><input className="form-control premium-input form-control-sm" value={activity.name} onChange={(e) => updateActivityField(idx, "name", e.target.value)} /></td>
+                          <td><input className="form-control premium-input form-control-sm mono" value={activity.code} onChange={(e) => updateActivityField(idx, "code", e.target.value)} /></td>
+                          <td><input className="form-control premium-input form-control-sm" value={activity.type} onChange={(e) => updateActivityField(idx, "type", e.target.value)} /></td>
+                          <td>
+                            <button className={`admin-chip ${activity.locked ? "active" : ""}`} style={{fontSize:"0.75rem"}} onClick={() => toggleActivityLock(idx)}>
+                              <i className={`bi ${activity.locked ? "bi-lock" : "bi-unlock"}`} /> {activity.locked ? "Lock" : "Active"}
+                            </button>
+                          </td>
+                          <td className="text-end">
+                            <button className="icon-btn" onClick={() => deleteActivity(idx)}><i className="bi bi-trash" /></button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </article>
           )}
           {tab === "locations" && (
-            <article className="panel-card settings-section">
-              <h3 className="h5 mb-3">Location Mapping</h3>
-              <div className="row g-3">
-                <div className="col-md-4">
-                  <label className="form-label">Districts</label>
-                  <select
-                    className="form-select premium-input"
-                    value={selectedDistrict?.district || ""}
-                    onChange={(e) => {
-                      const idx = locationEditor.findIndex((d) => d.district === e.target.value);
-                      if (idx >= 0) {
-                        setSelectedDistrictIdx(idx);
-                        setSelectedUpazilaIdx(0);
-                      }
-                    }}
-                  >
-                    {locationEditor.map((d) => (
-                      <option key={d.district}>{d.district}</option>
-                    ))}
-                  </select>
+            <article className="settings-section">
+              <div className="settings-section-head">
+                <h3><i className="bi bi-geo-alt" /> Location Mapping</h3>
+                <div className="admin-action-bar">
+                  <button className="primary-btn" onClick={() => persistLocations()}>Save</button>
                 </div>
-                <div className="col-md-4">
-                  <label className="form-label">District Name</label>
-                  <input
-                    className="form-control premium-input"
-                    value={selectedDistrict?.district || ""}
-                    onChange={(e) => updateDistrictName(e.target.value)}
-                    disabled={!selectedDistrict}
-                  />
-                </div>
-                <div className="col-md-4 d-flex align-items-end gap-2">
-                  <button className="icon-btn" onClick={() => moveDistrict("up")} disabled={!selectedDistrict || selectedDistrictIdx === 0}>
-                    <i className="bi bi-arrow-up" />
-                  </button>
-                  <button className="icon-btn" onClick={() => moveDistrict("down")} disabled={!selectedDistrict || selectedDistrictIdx === locationEditor.length - 1}>
-                    <i className="bi bi-arrow-down" />
-                  </button>
-                  <button className="danger-outline flex-fill" onClick={deleteDistrict} disabled={!selectedDistrict}>
-                    <i className="bi bi-trash" /> Delete District
-                  </button>
-                </div>
+              </div>
+
+              <div className="row g-3 mb-3">
                 <div className="col-md-6">
-                  <label className="form-label">Add District</label>
-                  <div className="d-flex gap-2">
-                    <input
-                      className="form-control premium-input"
-                      value={newDistrictName}
-                      onChange={(e) => setNewDistrictName(e.target.value)}
-                    />
-                    <button className="outline-btn" onClick={addDistrict}>Add</button>
+                  <div className="admin-field">
+                    <label className="form-label">Districts</label>
+                    <div className="admin-option-group">
+                      {locationEditor.map((d, idx) => (
+                        <button key={d.district} className={`admin-chip ${selectedDistrictIdx === idx ? "active" : ""}`} onClick={() => { setSelectedDistrictIdx(idx); setSelectedUpazilaIdx(0); }}>
+                          {d.district}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
+                <div className="col-md-3">
+                  <div className="admin-field">
+                    <label className="form-label">Name</label>
+                    <input className="form-control premium-input" value={selectedDistrict?.district || ""} onChange={(e) => updateDistrictName(e.target.value)} disabled={!selectedDistrict} />
+                  </div>
+                </div>
+                <div className="col-md-3 d-flex align-items-end">
+                  <div className="admin-action-bar">
+                    <button className="icon-btn" onClick={() => moveDistrict("up")} disabled={!selectedDistrict || selectedDistrictIdx === 0}><i className="bi bi-chevron-up" /></button>
+                    <button className="icon-btn" onClick={() => moveDistrict("down")} disabled={!selectedDistrict || selectedDistrictIdx === locationEditor.length - 1}><i className="bi bi-chevron-down" /></button>
+                    <button className="admin-chip text-danger" onClick={deleteDistrict} disabled={!selectedDistrict}><i className="bi bi-trash" /> Delete</button>
+                  </div>
+                </div>
+                <div className="col-md-6">
+                  <div className="admin-field">
+                    <label className="form-label">Add District</label>
+                    <div className="d-flex gap-2">
+                      <input className="form-control premium-input" value={newDistrictName} onChange={(e) => setNewDistrictName(e.target.value)} placeholder="District name" />
+                      <button className="outline-btn" onClick={addDistrict}>Add</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
 
-                {selectedDistrict && (
-                  <>
-                    <div className="col-12 mt-4">
-                      <h4 className="h6 mb-2 border-top pt-3">Upazilas in {selectedDistrict.district}</h4>
-                    </div>
-                    <div className="col-md-4">
-                      <label className="form-label">Upazilas</label>
-                      <select
-                        className="form-select premium-input"
-                        value={selectedUpazila?.name || ""}
-                        onChange={(e) => {
-                          const idx = selectedDistrict.upazilas.findIndex((u) => u.name === e.target.value);
-                          if (idx >= 0) setSelectedUpazilaIdx(idx);
-                        }}
-                      >
-                        {selectedDistrict.upazilas.map((u) => (
-                          <option key={u.name}>{u.name}</option>
+              {selectedDistrict && (
+                <>
+                  <hr className="my-3" />
+                  <div className="row g-3 mb-3">
+                    <div className="col-12"><label className="form-label fw-bold">Upazilas in {selectedDistrict.district}</label></div>
+                    <div className="col-md-6">
+                      <div className="admin-option-group">
+                        {selectedDistrict.upazilas.map((u, idx) => (
+                          <button key={u.name} className={`admin-chip ${selectedUpazilaIdx === idx ? "active" : ""}`} onClick={() => setSelectedUpazilaIdx(idx)}>
+                            {u.name}
+                          </button>
                         ))}
-                      </select>
+                      </div>
                     </div>
-                    <div className="col-md-4">
-                      <label className="form-label">Upazila Name</label>
-                      <input
-                        className="form-control premium-input"
-                        value={selectedUpazila?.name || ""}
-                        onChange={(e) => updateUpazilaName(e.target.value)}
-                        disabled={!selectedUpazila}
-                      />
+                    <div className="col-md-3">
+                      <input className="form-control premium-input" value={selectedUpazila?.name || ""} onChange={(e) => updateUpazilaName(e.target.value)} disabled={!selectedUpazila} placeholder="Upazila name" />
                     </div>
-                    <div className="col-md-4 d-flex align-items-end gap-2">
-                      <button className="icon-btn" onClick={() => moveUpazila("up")} disabled={!selectedUpazila || selectedUpazilaIdx === 0}>
-                        <i className="bi bi-arrow-up" />
-                      </button>
-                      <button className="icon-btn" onClick={() => moveUpazila("down")} disabled={!selectedUpazila || selectedUpazilaIdx === selectedDistrict.upazilas.length - 1}>
-                        <i className="bi bi-arrow-down" />
-                      </button>
-                      <button className="danger-outline flex-fill" onClick={deleteUpazila} disabled={!selectedUpazila}>
-                        <i className="bi bi-trash" /> Delete Upazila
-                      </button>
+                    <div className="col-md-3 d-flex align-items-end">
+                      <div className="admin-action-bar">
+                        <button className="icon-btn" onClick={() => moveUpazila("up")} disabled={!selectedUpazila || selectedUpazilaIdx === 0}><i className="bi bi-chevron-up" /></button>
+                        <button className="icon-btn" onClick={() => moveUpazila("down")} disabled={!selectedUpazila || selectedUpazilaIdx === selectedDistrict.upazilas.length - 1}><i className="bi bi-chevron-down" /></button>
+                        <button className="admin-chip text-danger" onClick={deleteUpazila} disabled={!selectedUpazila}><i className="bi bi-trash" /></button>
+                      </div>
                     </div>
                     <div className="col-md-6">
-                      <label className="form-label">Add Upazila</label>
                       <div className="d-flex gap-2">
-                        <input
-                          className="form-control premium-input"
-                          value={newUpazilaName}
-                          onChange={(e) => setNewUpazilaName(e.target.value)}
-                        />
+                        <input className="form-control premium-input" value={newUpazilaName} onChange={(e) => setNewUpazilaName(e.target.value)} placeholder="Upazila name" />
                         <button className="outline-btn" onClick={addUpazila}>Add</button>
                       </div>
                     </div>
-                  </>
-                )}
+                  </div>
+                </>
+              )}
 
-                {selectedUpazila && (
-                  <>
-                    <div className="col-12 mt-4">
-                      <h4 className="h6 mb-2 border-top pt-3">Unions in {selectedUpazila.name}</h4>
-                    </div>
+              {selectedUpazila && (
+                <>
+                  <hr className="my-3" />
+                  <div className="row g-3">
+                    <div className="col-12"><label className="form-label fw-bold">Unions in {selectedUpazila.name}</label></div>
                     <div className="col-12">
-                      <label className="form-label">Union List (comma or new line separated)</label>
-                      <textarea
-                        className="form-control premium-input"
-                        rows={4}
-                        value={unionEditor}
-                        onChange={(e) => setUnionEditor(e.target.value)}
-                      />
+                      <div className="d-flex gap-2">
+                        <textarea className="form-control premium-input" rows={3} value={unionEditor} onChange={(e) => setUnionEditor(e.target.value)} placeholder="Comma or new line separated union names" />
+                      </div>
                     </div>
                     <div className="col-12 d-flex justify-content-between align-items-center">
-                      <p className="small text-muted mb-0">{parseUnionsText(unionEditor).length} union prepared</p>
-                      <button className="outline-btn" onClick={saveUnions}>
-                        <i className="bi bi-check2-circle" /> Update Unions List
-                      </button>
+                      <span className="small text-muted">{parseUnionsText(unionEditor).length} union(s)</span>
+                      <button className="outline-btn" onClick={saveUnions}><i className="bi bi-check2-circle" /> Update Unions</button>
                     </div>
                     {selectedUpazila.unions.length > 0 && (
                       <div className="col-12 d-flex flex-wrap gap-2">
@@ -946,219 +966,331 @@ export default function AdminPage() {
                         ))}
                       </div>
                     )}
-                  </>
-                )}
-
-              </div>
-              <div className="mt-4">
-                <button className="primary-btn" onClick={() => persistLocations()}>
-                  Save Location Mapping
-                </button>
-              </div>
+                  </div>
+                </>
+              )}
             </article>
           )}
           {tab === "participants" && (
-            <article className="panel-card settings-section">
-              <h3 className="h5 mb-3">Participant Management</h3>
-              <div className="row g-3">
-                <div className="col-md-6"><label className="form-label">Project</label><select className="form-select premium-input" value={currentProject?.project || ""} onChange={(e) => setProjectIdx(Math.max(projectNames.indexOf(e.target.value), 0))}>{projectNames.map((n) => <option key={n}>{n}</option>)}</select></div>
-                <div className="col-md-6"><label className="form-label">Add Category</label><div className="d-flex gap-2"><input className="form-control premium-input" value={newCategory} onChange={(e) => setNewCategory(e.target.value)} /><button className="outline-btn" onClick={addCategory}>Add</button></div></div>
+            <article className="settings-section">
+              <div className="settings-section-head">
+                <h3><i className="bi bi-people" /> Participant Categories</h3>
+                <div className="admin-action-bar">
+                  <button className="primary-btn" onClick={() => persistProjects()}>Save</button>
+                </div>
               </div>
-              <div className="d-grid gap-2 mt-3">{currentProject?.participantCategories.map((c, idx) => <article key={`${c.key}-${idx}`} className="admin-participant-card"><div className="row g-2"><div className="col-md-5"><input className="form-control premium-input" value={c.label} onChange={(e) => setProjects((prev) => prev.map((p, i) => i === projectIdx ? { ...p, participantCategories: p.participantCategories.map((r, j) => (j === idx ? { ...r, label: e.target.value } : r)) } : p))} /></div><div className="col-md-3"><input className="form-control premium-input mono" value={c.key} onChange={(e) => setProjects((prev) => prev.map((p, i) => i === projectIdx ? { ...p, participantCategories: p.participantCategories.map((r, j) => (j === idx ? { ...r, key: slugify(e.target.value) } : r)) } : p))} /></div><div className="col-md-4 d-flex gap-2"><button className="icon-btn" onClick={() => setProjects((prev) => prev.map((p, i) => i === projectIdx ? { ...p, participantCategories: move(p.participantCategories, idx, "up") } : p))}><i className="bi bi-arrow-up" /></button><button className="icon-btn" onClick={() => setProjects((prev) => prev.map((p, i) => i === projectIdx ? { ...p, participantCategories: move(p.participantCategories, idx, "down") } : p))}><i className="bi bi-arrow-down" /></button><button className="icon-btn" onClick={() => setProjects((prev) => prev.map((p, i) => i === projectIdx ? { ...p, participantCategories: p.participantCategories.filter((_, j) => j !== idx) } : p))}><i className="bi bi-trash" /></button></div></div></article>)}</div>
-              <div className="mt-3"><button className="primary-btn" onClick={() => persistProjects()}>Save Participant Mapping</button></div>
+
+              <div className="row g-3 mb-3">
+                <div className="col-md-6">
+                  <div className="admin-field">
+                    <label className="form-label">Project</label>
+                    <div className="admin-option-group">
+                      {projectNames.map((n) => (
+                        <button key={n} className={`admin-chip ${currentProject?.project === n ? "active" : ""}`} onClick={() => setProjectIdx(projectNames.indexOf(n))}>{n}</button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div className="col-md-6">
+                  <div className="admin-field">
+                    <label className="form-label">Add Category</label>
+                    <div className="d-flex gap-2">
+                      <input className="form-control premium-input" value={newCategory} onChange={(e) => setNewCategory(e.target.value)} placeholder="e.g. Male, Female, Youth" />
+                      <button className="outline-btn" onClick={addCategory}>Add</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {(!currentProject?.participantCategories.length) ? (
+                <div className="admin-empty-state">
+                  <i className="bi bi-people" />
+                  <p className="mb-0">No categories defined for this project.</p>
+                </div>
+              ) : (
+                <div className="admin-table-wrap">
+                  <table className="table premium-table mb-0">
+                    <thead>
+                      <tr>
+                        <th>Label</th>
+                        <th>Key</th>
+                        <th style={{width:120}}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {currentProject?.participantCategories.map((c, idx) => (
+                        <tr key={`${c.key}-${idx}`}>
+                          <td><input className="form-control premium-input form-control-sm" value={c.label} onChange={(e) => setProjects((prev) => prev.map((p, i) => i === projectIdx ? { ...p, participantCategories: p.participantCategories.map((r, j) => (j === idx ? { ...r, label: e.target.value } : r)) } : p))} /></td>
+                          <td><input className="form-control premium-input form-control-sm mono" value={c.key} onChange={(e) => setProjects((prev) => prev.map((p, i) => i === projectIdx ? { ...p, participantCategories: p.participantCategories.map((r, j) => (j === idx ? { ...r, key: slugify(e.target.value) } : r)) } : p))} /></td>
+                          <td>
+                            <div className="admin-action-bar">
+                              <button className="icon-btn" onClick={() => setProjects((prev) => prev.map((p, i) => i === projectIdx ? { ...p, participantCategories: move(p.participantCategories, idx, "up") } : p))}><i className="bi bi-chevron-up" /></button>
+                              <button className="icon-btn" onClick={() => setProjects((prev) => prev.map((p, i) => i === projectIdx ? { ...p, participantCategories: move(p.participantCategories, idx, "down") } : p))}><i className="bi bi-chevron-down" /></button>
+                              <button className="icon-btn" onClick={() => setProjects((prev) => prev.map((p, i) => i === projectIdx ? { ...p, participantCategories: p.participantCategories.filter((_, j) => j !== idx) } : p))}><i className="bi bi-trash" /></button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </article>
           )}
           {tab === "reports" && (
-            <article className="panel-card settings-section">
-              <h3 className="h5 mb-3">Report and Print Setup</h3>
-              <div className="row g-3">
-                <div className="col-md-6"><label className="form-label">Default Report Theme</label><select className="form-select premium-input" value={reportTheme} onChange={(e) => setReportTheme(e.target.value)}><option>Corporate Blue</option><option>Clean Neutral</option><option>Executive Dark</option></select></div>
-                <div className="col-md-6"><label className="form-label">Template DOCX</label><input className="form-control premium-input" value={tpl} readOnly /></div>
-                <div className="col-md-12 d-flex gap-2 flex-wrap"><button className="outline-btn" onClick={exportDemoDocx}><i className="bi bi-download" /> Export Demo DOCX</button><label className="outline-btn m-0"><i className="bi bi-upload" /> Import DOCX<input type="file" accept=".doc,.docx" className="d-none" onChange={(e) => setTpl(e.target.files?.[0]?.name || tpl)} /></label></div>
+            <article className="settings-section">
+              <div className="settings-section-head">
+                <h3><i className="bi bi-file-text" /> Report &amp; Print Setup</h3>
+                <div className="admin-action-bar">
+                  <button className="primary-btn" onClick={() => persistReports()}>Save</button>
+                </div>
               </div>
-              <div className="mt-3 d-grid gap-2"><label className="confirm-box"><input type="checkbox" checked={docx} onChange={(e) => setDocx(e.target.checked)} /><span>Enable DOCX</span></label><label className="confirm-box"><input type="checkbox" checked={pdf} onChange={(e) => setPdf(e.target.checked)} /><span>Enable PDF</span></label><label className="confirm-box"><input type="checkbox" checked={csv} onChange={(e) => setCsv(e.target.checked)} /><span>Enable CSV</span></label><label className="confirm-box"><input type="checkbox" checked={zip} onChange={(e) => setZip(e.target.checked)} /><span>Enable ZIP</span></label></div>
+
+              <div className="row g-3 mb-3">
+                <div className="col-md-6">
+                  <div className="admin-field">
+                    <label className="form-label">Default Theme</label>
+                    <select className="form-select premium-input" value={reportTheme} onChange={(e) => setReportTheme(e.target.value)}>
+                      <option>Corporate Blue</option><option>Clean Neutral</option><option>Executive Dark</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="col-md-6">
+                  <div className="admin-field">
+                    <label className="form-label">DOCX Template</label>
+                    <input className="form-control premium-input" value={tpl} readOnly />
+                  </div>
+                </div>
+                <div className="col-12">
+                  <div className="admin-action-bar">
+                    <button className="outline-btn" onClick={exportDemoDocx}><i className="bi bi-download" /> Export Demo DOCX</button>
+                    <label className="outline-btn m-0"><i className="bi bi-upload" /> Import DOCX<input type="file" accept=".doc,.docx" className="d-none" onChange={(e) => setTpl(e.target.files?.[0]?.name || tpl)} /></label>
+                  </div>
+                </div>
+              </div>
+
+              <div className="row g-3 mb-3">
+                <div className="col-12"><label className="form-label fw-bold">Export Formats</label></div>
+                <div className="col-12">
+                  <div className="admin-option-group">
+                    <label className={`admin-chip ${docx ? "active" : ""}`} style={{cursor:"pointer"}} onClick={() => setDocx(!docx)}>
+                      <i className={`bi ${docx ? "bi-check2-square" : "bi-square"}`} /> DOCX
+                    </label>
+                    <label className={`admin-chip ${pdf ? "active" : ""}`} style={{cursor:"pointer"}} onClick={() => setPdf(!pdf)}>
+                      <i className={`bi ${pdf ? "bi-check2-square" : "bi-square"}`} /> PDF
+                    </label>
+                    <label className={`admin-chip ${csv ? "active" : ""}`} style={{cursor:"pointer"}} onClick={() => setCsv(!csv)}>
+                      <i className={`bi ${csv ? "bi-check2-square" : "bi-square"}`} /> CSV
+                    </label>
+                    <label className={`admin-chip ${zip ? "active" : ""}`} style={{cursor:"pointer"}} onClick={() => setZip(!zip)}>
+                      <i className={`bi ${zip ? "bi-check2-square" : "bi-square"}`} /> ZIP
+                    </label>
+                  </div>
+                </div>
+              </div>
+
               <hr />
               <div className="row g-3">
-                <div className="col-md-3"><label className="form-label">Preset</label><select className="form-select premium-input" value={printPreset} onChange={(e) => setPrintPreset(e.target.value)}><option>Standard A4</option><option>Compact</option><option>Detailed</option></select></div>
-                <div className="col-md-3"><label className="form-label">Page Size</label><select className="form-select premium-input" value={printSize} onChange={(e) => setPrintSize(e.target.value)}><option>A4</option><option>Letter</option><option>Legal</option></select></div>
-                <div className="col-md-3"><label className="form-label">Orientation</label><select className="form-select premium-input" value={printOrientation} onChange={(e) => setPrintOrientation(e.target.value as "Portrait" | "Landscape")}><option>Portrait</option><option>Landscape</option></select></div>
-                <div className="col-md-3 d-flex align-items-end"><button className="outline-btn w-100" onClick={() => printTemplatePreview({ preset: printPreset, pageSize: printSize, orientation: printOrientation === "Landscape" ? "Landscape" : "Portrait", header, footer }, tpl)}><i className="bi bi-printer" /> Text Preview</button></div>
-                <div className="col-md-6"><label className="form-label">Header</label><input className="form-control premium-input" value={header} onChange={(e) => setHeader(e.target.value)} /></div>
-                <div className="col-md-6"><label className="form-label">Footer</label><input className="form-control premium-input" value={footer} onChange={(e) => setFooter(e.target.value)} /></div>
+                <div className="col-md-3">
+                  <div className="admin-field">
+                    <label className="form-label">Preset</label>
+                    <select className="form-select premium-input" value={printPreset} onChange={(e) => setPrintPreset(e.target.value)}>
+                      <option>Standard A4</option><option>Compact</option><option>Detailed</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="col-md-3">
+                  <div className="admin-field">
+                    <label className="form-label">Page Size</label>
+                    <select className="form-select premium-input" value={printSize} onChange={(e) => setPrintSize(e.target.value)}>
+                      <option>A4</option><option>Letter</option><option>Legal</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="col-md-3">
+                  <div className="admin-field">
+                    <label className="form-label">Orientation</label>
+                    <select className="form-select premium-input" value={printOrientation} onChange={(e) => setPrintOrientation(e.target.value as "Portrait" | "Landscape")}>
+                      <option>Portrait</option><option>Landscape</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="col-md-3 d-flex align-items-end">
+                  <button className="outline-btn w-100" onClick={() => printTemplatePreview({ preset: printPreset, pageSize: printSize, orientation: printOrientation === "Landscape" ? "Landscape" : "Portrait", header, footer }, tpl)}>
+                    <i className="bi bi-printer" /> Preview
+                  </button>
+                </div>
+                <div className="col-md-6">
+                  <div className="admin-field">
+                    <label className="form-label">Header</label>
+                    <input className="form-control premium-input" value={header} onChange={(e) => setHeader(e.target.value)} />
+                  </div>
+                </div>
+                <div className="col-md-6">
+                  <div className="admin-field">
+                    <label className="form-label">Footer</label>
+                    <input className="form-control premium-input" value={footer} onChange={(e) => setFooter(e.target.value)} />
+                  </div>
+                </div>
               </div>
-              <div className="mt-3"><button className="primary-btn" onClick={() => persistReports()}>Save Report + Print</button></div>
             </article>
           )}
           {tab === "users" && (
-            <article className="panel-card settings-section">
-              <h3 className="h5 mb-3">User Management</h3>
-              <div className="row g-3">
+            <article className="settings-section">
+              <div className="settings-section-head">
+                <h3><i className="bi bi-person-badge" /> User Management</h3>
+                <div className="admin-action-bar">
+                  <button className="primary-btn" onClick={() => persistUsers()}>Save</button>
+                </div>
+              </div>
+
+              <div className="row g-3 mb-3 p-3" style={{background:"color-mix(in srgb, var(--surface-soft) 60%, var(--surface))", borderRadius:"14px", border:"1px solid var(--line)"}}>
+                <div className="col-12"><label className="form-label fw-bold">{editUser ? "Edit User" : "Create New User"}</label></div>
                 <div className="col-md-4">
-                  <label className="form-label">Name</label>
-                  <input
-                    className="form-control premium-input"
-                    value={userForm.fullName}
-                    onChange={(e) => setUserForm((p) => ({ ...p, fullName: e.target.value }))}
-                  />
+                  <div className="admin-field">
+                    <label className="form-label">Full Name</label>
+                    <input className="form-control premium-input" value={userForm.fullName} onChange={(e) => setUserForm((p) => ({ ...p, fullName: e.target.value }))} placeholder="John Doe" />
+                  </div>
                 </div>
                 <div className="col-md-3">
-                  <label className="form-label">Username</label>
-                  <input
-                    className="form-control premium-input"
-                    value={userForm.username}
-                    onChange={(e) => setUserForm((p) => ({ ...p, username: e.target.value }))}
-                    disabled={Boolean(editUser)}
-                  />
+                  <div className="admin-field">
+                    <label className="form-label">Username</label>
+                    <input className="form-control premium-input" value={userForm.username} onChange={(e) => setUserForm((p) => ({ ...p, username: e.target.value }))} disabled={Boolean(editUser)} placeholder="johndoe" />
+                  </div>
                 </div>
                 <div className="col-md-5">
-                  <label className="form-label">Email</label>
-                  <input
-                    className="form-control premium-input"
-                    value={userForm.email}
-                    onChange={(e) => setUserForm((p) => ({ ...p, email: e.target.value }))}
-                  />
+                  <div className="admin-field">
+                    <label className="form-label">Email</label>
+                    <input className="form-control premium-input" value={userForm.email} onChange={(e) => setUserForm((p) => ({ ...p, email: e.target.value }))} placeholder="john@example.com" />
+                  </div>
                 </div>
                 <div className="col-md-4">
-                  <label className="form-label">Designation</label>
-                  <input
-                    className="form-control premium-input"
-                    value={userForm.title}
-                    onChange={(e) => setUserForm((p) => ({ ...p, title: e.target.value }))}
-                    placeholder="Field Officer / Manager / Coordinator"
-                  />
+                  <div className="admin-field">
+                    <label className="form-label">Designation</label>
+                    <input className="form-control premium-input" value={userForm.title} onChange={(e) => setUserForm((p) => ({ ...p, title: e.target.value }))} placeholder="Field Officer / Manager" />
+                  </div>
                 </div>
-                <div className="col-md-4">
-                  <label className="form-label">Password</label>
-                  <input
-                    type="text"
-                    className="form-control premium-input mono"
-                    value={userForm.password}
-                    onChange={(e) => setUserForm((p) => ({ ...p, password: e.target.value }))}
-                  />
+                <div className="col-md-3">
+                  <div className="admin-field">
+                    <label className="form-label">Password</label>
+                    <input type="text" className="form-control premium-input mono" value={userForm.password} onChange={(e) => setUserForm((p) => ({ ...p, password: e.target.value }))} placeholder="123456" />
+                  </div>
                 </div>
-                <div className="col-md-4">
-                  <label className="form-label">Role</label>
-                  <select
-                    className="form-select premium-input"
-                    value={userForm.role}
-                    onChange={(e) => setUserForm((p) => ({ ...p, role: e.target.value as AppUser["role"] }))}
-                  >
-                    <option>User</option>
-                    <option>Manager</option>
-                    <option>Admin</option>
-                  </select>
+                <div className="col-md-3">
+                  <div className="admin-field">
+                    <label className="form-label">Role</label>
+                    <select className="form-select premium-input" value={userForm.role} onChange={(e) => setUserForm((p) => ({ ...p, role: e.target.value as AppUser["role"] }))}>
+                      <option>User</option><option>Manager</option><option>Admin</option>
+                    </select>
+                  </div>
                 </div>
-                <div className="col-md-4 d-flex align-items-end">
-                  <label className="confirm-box">
-                    <input
-                      type="checkbox"
-                      checked={userForm.active}
-                      onChange={(e) => setUserForm((p) => ({ ...p, active: e.target.checked }))}
-                    />
-                    <span>Active</span>
+                <div className="col-md-2 d-flex align-items-end">
+                  <label className={`admin-chip ${userForm.active ? "active" : ""}`} style={{cursor:"pointer"}} onClick={() => setUserForm((p) => ({ ...p, active: !p.active }))}>
+                    <i className={`bi ${userForm.active ? "bi-toggle-on" : "bi-toggle-off"}`} /> {userForm.active ? "Active" : "Inactive"}
                   </label>
                 </div>
-                <div className="col-md-8 d-flex align-items-end">
-                  <button className="primary-btn w-100" onClick={upsertUser}>
-                    {editUser ? "Update User" : "Create User"}
-                  </button>
-                </div>
-              </div>
-              <div className="mt-3">
-                <p className="small text-muted mb-2">Assign Projects (Admin = all projects)</p>
-                <div className="d-flex flex-wrap gap-3">
-                  {projectNames.map((p) => (
-                    <label key={p} className="confirm-box">
-                      <input
-                        type="checkbox"
-                        checked={userForm.role === "Admin" || userForm.projects.includes(p)}
-                        onChange={() =>
+                <div className="col-12">
+                  <div className="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <div className="admin-option-group">
+                      <span className="small text-muted">Projects:</span>
+                      {projectNames.map((p) => (
+                        <label key={p} className={`admin-chip ${userForm.role === "Admin" || userForm.projects.includes(p) ? "active" : ""}`} style={{cursor: userForm.role === "Admin" ? "default" : "pointer"}} onClick={() => {
+                          if (userForm.role === "Admin") return;
                           setUserForm((prev) => ({
                             ...prev,
-                            projects: prev.projects.includes(p)
-                              ? prev.projects.filter((x) => x !== p)
-                              : [...prev.projects, p]
-                          }))
-                        }
-                        disabled={userForm.role === "Admin"}
-                      />
-                      <span>{p}</span>
-                    </label>
-                  ))}
+                            projects: prev.projects.includes(p) ? prev.projects.filter((x) => x !== p) : [...prev.projects, p]
+                          }));
+                        }}>
+                          {p}
+                        </label>
+                      ))}
+                    </div>
+                    <button className="primary-btn" onClick={upsertUser}>
+                      <i className={`bi ${editUser ? "bi-pencil" : "bi-person-plus"}`} /> {editUser ? "Update" : "Create"}
+                    </button>
+                  </div>
                 </div>
               </div>
-              <div className="table-responsive mt-3">
-                <table className="table premium-table mb-0">
-                  <thead>
-                    <tr>
-                      <th>Name</th>
-                      <th>Username</th>
-                      <th>Email</th>
-                      <th>Designation</th>
-                      <th>Role</th>
-                      <th>Active</th>
-                      <th>Projects</th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {users.map((u) => (
-                      <tr key={u.username}>
-                        <td>{u.fullName}</td>
-                        <td className="mono">{u.username}</td>
-                        <td>{u.email}</td>
-                        <td>{u.title || "-"}</td>
-                        <td>{u.role}</td>
-                        <td>{u.active ? "Yes" : "No"}</td>
-                        <td>{u.role === "Admin" ? "All Projects" : u.projects.join(", ")}</td>
-                        <td>
-                          <div className="d-flex gap-2 justify-content-end">
-                            <button
-                              className="icon-btn"
-                              onClick={() => {
+
+              {!users.length ? (
+                <div className="admin-empty-state">
+                  <i className="bi bi-people" />
+                  <p className="mb-0">No users yet.</p>
+                </div>
+              ) : (
+                <div className="admin-table-wrap">
+                  <table className="table premium-table mb-0">
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Username</th>
+                        <th>Email</th>
+                        <th>Role</th>
+                        <th>Status</th>
+                        <th>Projects</th>
+                        <th style={{width:100}} />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {users.map((u) => (
+                        <tr key={u.username}>
+                          <td><strong>{u.fullName}</strong><br /><small className="text-muted">{u.title || "-"}</small></td>
+                          <td className="mono">{u.username}</td>
+                          <td className="small">{u.email}</td>
+                          <td><span className={`user-role ${u.role.toLowerCase()}`}>{u.role}</span></td>
+                          <td><span className={`admin-chip ${u.active ? "active" : ""}`} style={{fontSize:"0.72rem",cursor:"default"}}>{u.active ? "Active" : "Inactive"}</span></td>
+                          <td className="small">{u.role === "Admin" ? "All" : u.projects.join(", ") || "-"}</td>
+                          <td>
+                            <div className="admin-action-bar justify-content-end">
+                              <button className="icon-btn" onClick={() => {
                                 setEditUser(u.username);
                                 setUserForm({
-                                  fullName: u.fullName,
-                                  username: u.username,
-                                  email: u.email,
-                                  title: u.title || "",
-                                  password: u.password || "123456",
-                                  role: u.role,
-                                  active: u.active,
+                                  fullName: u.fullName, username: u.username, email: u.email, title: u.title || "",
+                                  password: u.password || "123456", role: u.role, active: u.active,
                                   projects: u.role === "Admin" ? projectNames : u.projects
                                 });
-                              }}
-                            >
-                              <i className="bi bi-pencil" />
-                            </button>
-                            <button
-                              className="icon-btn"
-                              onClick={() =>
-                                setUsers((prev) =>
-                                  prev.map((x) => (x.username === u.username ? { ...x, active: !x.active } : x))
-                                )
-                              }
-                            >
-                              <i className={`bi ${u.active ? "bi-toggle-on" : "bi-toggle-off"}`} />
-                            </button>
-                            <button className="icon-btn" onClick={() => setUsers((prev) => prev.filter((x) => x.username !== u.username))}>
-                              <i className="bi bi-trash" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="mt-3"><button className="primary-btn" onClick={() => persistUsers()}>Save Users</button></div>
+                              }}><i className="bi bi-pencil" /></button>
+                              <button className="icon-btn" onClick={() => setUsers((prev) => prev.map((x) => (x.username === u.username ? { ...x, active: !x.active } : x)))}>
+                                <i className={`bi ${u.active ? "bi-toggle-on" : "bi-toggle-off"}`} />
+                              </button>
+                              <button className="icon-btn" onClick={() => setUsers((prev) => prev.filter((x) => x.username !== u.username))}><i className="bi bi-trash" /></button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </article>
           )}
           {tab === "themes" && (
-            <article className="panel-card settings-section">
-              <h3 className="h5 mb-3">Theme Panel</h3>
-              <div className="d-flex flex-wrap gap-2">{themeOptions.map((t) => <button key={t.value} className={`settings-nav-btn ${theme === t.value ? "active" : ""}`} onClick={() => setTheme(t.value)}>{t.label}</button>)}</div>
-              <div className="mt-3"><button className="primary-btn" onClick={() => { addAuditLog("Updated Theme", "Settings", "theme", `Theme set to ${theme}`); notify("Theme saved successfully.", "success"); }}>Save Theme</button></div>
+            <article className="settings-section">
+              <div className="settings-section-head">
+                <h3><i className="bi bi-palette" /> Theme Panel</h3>
+                <div className="admin-action-bar">
+                  <button className="primary-btn" onClick={() => { addAuditLog("Updated Theme", "Settings", "theme", `Theme set to ${theme}`); notify("Theme saved.", "success"); }}>Save</button>
+                </div>
+              </div>
+              <div className="admin-theme-grid">
+                {themeOptions.map((t) => {
+                  const swatches: Record<string, string> = {
+                    "corporate-light": "#0f4fa8",
+                    "corporate-dark": "#5ea1ff",
+                    "emerald": "#1f8f6b",
+                    "violet": "#5e50aa",
+                    "sunset": "#d4824a",
+                    "mono": "#4a4a4a"
+                  };
+                  return (
+                    <div key={t.value} className={`admin-theme-card ${theme === t.value ? "active" : ""}`} onClick={() => setTheme(t.value)}>
+                      <div className="theme-swatch" style={{background: swatches[t.value] || "var(--brand)"}} />
+                      <div className="theme-label">{t.label}</div>
+                      <div className="theme-desc">{theme === t.value ? "Active" : "Click to apply"}</div>
+                    </div>
+                  );
+                })}
+              </div>
             </article>
           )}
         </div>

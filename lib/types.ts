@@ -39,6 +39,7 @@ export type ActivityAttachment = {
   category: AttachmentCategory;
   name: string;
   url: string;
+  directUrl?: string;
   type: "image" | "document";
   sizeKb: number;
 };
@@ -84,6 +85,9 @@ export type ProjectActivityMap = {
 
 export type OrgSettings = {
   orgName: string;
+  orgAddress: string;
+  orgPhone: string;
+  orgEmail: string;
   logoUrl: string;
 };
 
@@ -142,6 +146,16 @@ export type AppNotification = {
   at: string;
   unread: boolean;
   entryId?: string;
+};
+
+export type BackupManifest = {
+  version: number;
+  exportedAt: string;
+  orgName: string;
+  entryCount: number;
+  imageCount: number;
+  state: import("./store").PersistedState;
+  images: Record<string, string>;
 };
 
 export type DashboardMetrics = {

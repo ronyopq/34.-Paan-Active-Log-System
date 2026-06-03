@@ -47,6 +47,8 @@ type RegisterInput = {
 
 type PopupTone = "success" | "error" | "info";
 
+type Toast = { id: string; message: string; tone: PopupTone };
+
 type AppContextValue = {
   hydrated: boolean;
   user: AppUser | null;
@@ -65,7 +67,7 @@ type AppContextValue = {
   venueOptions: string[];
   orgSettings: OrgSettings;
   reportSettings: ReportSettings;
-  login: (username: string, password: string) => { ok: boolean; message?: string };
+  login: (username: string, password: string, remember?: boolean) => { ok: boolean; message?: string };
   register: (input: RegisterInput) => { ok: boolean; message?: string };
   logout: () => void;
   toggleTheme: () => void;
@@ -86,13 +88,18 @@ type AppContextValue = {
   addAuditLog: (action: string, module: string, targetId: string, notes: string) => void;
   updateEntryStatus: (id: string, status: EntryStatus) => void;
   markNotificationRead: (id: string) => void;
+  markAllNotificationsRead: () => void;
+  deleteNotification: (id: string) => void;
+  clearAllNotifications: () => void;
   wipeSystemData: (password: string) => { ok: boolean; message?: string };
+  restoreState: (state: PersistedState) => void;
   getFullState: () => PersistedState;
   unreadCount: number;
   visibleEntries: ActivityEntry[];
 };
 
 const SESSION_KEY = "praan_session_user";
+const REMEMBER_KEY = "praan_remember_me";
 const THEME_KEY = "praan_theme";
 const LANGUAGE_KEY = "praan_lang";
 const AVAILABLE_THEMES: ThemeMode[] = [
@@ -145,6 +152,9 @@ const cloneLocationMap = (map: LocationMap[]): LocationMap[] =>
 
 const cloneOrgSettings = (settings: OrgSettings): OrgSettings => ({
   orgName: settings.orgName,
+  orgAddress: settings.orgAddress || "",
+  orgPhone: settings.orgPhone || "",
+  orgEmail: settings.orgEmail || "",
   logoUrl: settings.logoUrl
 });
 
@@ -212,8 +222,7 @@ export const AppContextProvider = ({ children }: { children: React.ReactNode }) 
   const [venueOptions, setVenueOptionsState] = useState<string[]>([...defaultVenueOptions]);
   const [orgSettings, setOrgSettingsState] = useState<OrgSettings>(cloneOrgSettings(defaultOrgSettings));
   const [reportSettings, setReportSettingsState] = useState<ReportSettings>(cloneReportSettings(defaultReportSettings));
-  const [popup, setPopup] = useState<{ message: string; tone: PopupTone } | null>(null);
-  const popupTimer = useRef<number | null>(null);
+  const [toasts, setToasts] = useState<Toast[]>([]);
   const remoteSyncTimer = useRef<number | null>(null);
   const [hydrated, setHydrated] = useState(false);
 
@@ -252,7 +261,10 @@ export const AppContextProvider = ({ children }: { children: React.ReactNode }) 
       setOrgSettingsState(cloneOrgSettings(state.orgSettings));
       setReportSettingsState(cloneReportSettings(state.reportSettings));
 
-      const storedUsername = window.localStorage.getItem(SESSION_KEY);
+      const storedUsername =
+        window.localStorage.getItem(REMEMBER_KEY) === "0"
+          ? window.sessionStorage.getItem(SESSION_KEY)
+          : window.localStorage.getItem(SESSION_KEY) || window.sessionStorage.getItem(SESSION_KEY);
       if (storedUsername) {
         const found = state.users.find((item) => item.username === storedUsername);
         if (found && found.active) setUser(found);
@@ -354,13 +366,12 @@ export const AppContextProvider = ({ children }: { children: React.ReactNode }) 
 
   useEffect(
     () => () => {
-      if (popupTimer.current) window.clearTimeout(popupTimer.current);
       if (remoteSyncTimer.current) window.clearTimeout(remoteSyncTimer.current);
     },
     []
   );
 
-  const login = (username: string, password: string) => {
+  const login = (username: string, password: string, remember = true) => {
     const found = users.find((item) => item.username.toLowerCase() === username.trim().toLowerCase());
     if (!found) return { ok: false, message: "User not found" };
     if (!found.active) return { ok: false, message: "Account is inactive" };
@@ -382,7 +393,12 @@ export const AppContextProvider = ({ children }: { children: React.ReactNode }) 
     ]);
 
     setUser(found);
-    window.localStorage.setItem(SESSION_KEY, found.username);
+    window.localStorage.setItem(REMEMBER_KEY, remember ? "1" : "0");
+    if (remember) {
+      window.localStorage.setItem(SESSION_KEY, found.username);
+    } else {
+      window.sessionStorage.setItem(SESSION_KEY, found.username);
+    }
     return { ok: true };
   };
 
@@ -404,6 +420,7 @@ export const AppContextProvider = ({ children }: { children: React.ReactNode }) 
 
     setUsersState((prev) => [...prev, newUser]);
     setUser(newUser);
+    window.localStorage.setItem(REMEMBER_KEY, "1");
     window.localStorage.setItem(SESSION_KEY, newUser.username);
     return { ok: true };
   };
@@ -423,6 +440,7 @@ export const AppContextProvider = ({ children }: { children: React.ReactNode }) 
     }
     setUser(null);
     window.localStorage.removeItem(SESSION_KEY);
+    window.sessionStorage.removeItem(SESSION_KEY);
   };
 
   const toggleTheme = () => {
@@ -519,12 +537,11 @@ export const AppContextProvider = ({ children }: { children: React.ReactNode }) 
   };
 
   const notify = (message: string, tone: PopupTone = "success") => {
-    if (popupTimer.current) window.clearTimeout(popupTimer.current);
-    setPopup({ message, tone });
-    popupTimer.current = window.setTimeout(() => {
-      setPopup(null);
-      popupTimer.current = null;
-    }, 2800);
+    const id = `toast-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`;
+    setToasts((prev) => [...prev, { id, message, tone }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4000);
   };
 
   const addAuditLog = (action: string, module: string, targetId: string, notes: string) => {
@@ -571,6 +588,20 @@ export const AppContextProvider = ({ children }: { children: React.ReactNode }) 
     return { ok: true };
   };
 
+  const restoreState = (state: PersistedState) => {
+    setEntries(state.entries);
+    setNotifications(state.notifications);
+    setLoginLogs(state.loginLogs);
+    setAuditLogs(state.auditLogs);
+    setUsersState(cloneUsers(state.users));
+    setProjectMapState(cloneProjectMap(state.projectMap));
+    setLocationMapState(cloneLocationMap(state.locationMap));
+    setImplementedByOptionsState([...state.implementedByOptions]);
+    setVenueOptionsState([...state.venueOptions]);
+    setOrgSettingsState(cloneOrgSettings(state.orgSettings));
+    setReportSettingsState(cloneReportSettings(state.reportSettings));
+  };
+
   const getFullState = (): PersistedState => ({
     entries,
     notifications,
@@ -603,6 +634,18 @@ export const AppContextProvider = ({ children }: { children: React.ReactNode }) 
 
   const markNotificationRead = (id: string) => {
     setNotifications((prev) => prev.map((item) => (item.id === id ? { ...item, unread: false } : item)));
+  };
+
+  const markAllNotificationsRead = () => {
+    setNotifications((prev) => prev.map((item) => ({ ...item, unread: false })));
+  };
+
+  const deleteNotification = (id: string) => {
+    setNotifications((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const clearAllNotifications = () => {
+    setNotifications([]);
   };
 
   const role: Role = user?.role ?? "User";
@@ -654,32 +697,52 @@ export const AppContextProvider = ({ children }: { children: React.ReactNode }) 
         addAuditLog,
         updateEntryStatus,
         markNotificationRead,
+        markAllNotificationsRead,
+        deleteNotification,
+        clearAllNotifications,
         wipeSystemData,
+        restoreState,
         getFullState,
         unreadCount,
         visibleEntries: viewableEntries
       }}
     >
       {children}
-      {popup && (
-        <div className="app-popup-backdrop" onClick={() => setPopup(null)}>
-          <div className={`app-popup-card app-popup-${popup.tone}`} onClick={(event) => event.stopPropagation()}>
-            <div className="app-popup-icon">
-              <i
-                className={`bi ${
-                  popup.tone === "success"
-                    ? "bi-check2-circle"
-                    : popup.tone === "error"
-                      ? "bi-exclamation-octagon"
-                      : "bi-info-circle"
-                }`}
-              />
+      {toasts.length > 0 && (
+        <div className="toast-container" aria-live="polite">
+          {toasts.map((toast) => (
+            <div
+              key={toast.id}
+              className={`toast-card toast-${toast.tone}`}
+              onClick={() => setToasts((prev) => prev.filter((t) => t.id !== toast.id))}
+              role="alert"
+            >
+              <div className="toast-icon">
+                <i
+                  className={`bi ${
+                    toast.tone === "success"
+                      ? "bi-check2-circle"
+                      : toast.tone === "error"
+                        ? "bi-exclamation-octagon"
+                        : "bi-info-circle"
+                  }`}
+                />
+              </div>
+              <p className="toast-message">{toast.message}</p>
+              <button
+                className="toast-close"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setToasts((prev) => prev.filter((t) => t.id !== toast.id));
+                }}
+                aria-label="Dismiss"
+                type="button"
+              >
+                <i className="bi bi-x" />
+              </button>
+              <div className="toast-progress" />
             </div>
-            <p className="app-popup-message">{popup.message}</p>
-            <button className="outline-btn" onClick={() => setPopup(null)}>
-              Close
-            </button>
-          </div>
+          ))}
         </div>
       )}
     </AppContext.Provider>

@@ -1,7 +1,10 @@
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
 import { formatCurrency, formatDate } from "@/lib/format";
-import { ActivityEntry } from "@/lib/types";
+import { ActivityAttachment, ActivityEntry, OrgSettings } from "@/lib/types";
+
+type ExportValue = string | number;
+type ExportRow = Record<string, ExportValue>;
 
 export type ReportFilters = {
   project: string;
@@ -92,7 +95,6 @@ export const entryExportHeaders = [
   "Venue",
   "ImplementedBy",
   "Participants",
-  "ParticipantDetails",
   "Male",
   "Female",
   "Budget",
@@ -116,6 +118,8 @@ export const entryExportHeaders = [
   "ReviewedAt"
 ] as const;
 
+const participantMetricHeaders = ["Male", "Female", "Total"] as const;
+
 export const attachmentExportHeaders = [
   "EntryID",
   "Date",
@@ -138,10 +142,57 @@ const toAttachmentSummary = (entry: ActivityEntry, kind?: "image" | "document") 
     .map((file) => `${file.name} (${file.category})`)
     .join(" | ");
 
+const getBrowserOrigin = () => {
+  if (typeof window === "undefined") return "";
+  return window.location.origin;
+};
+
+const getPublicFileBaseUrl = () => (process.env.NEXT_PUBLIC_FILE_BASE_URL || "").trim().replace(/\/+$/g, "");
+
+const getProxyFileId = (value: string) => {
+  const link = String(value || "").trim();
+  if (!link.includes("/api/file")) return "";
+
+  try {
+    const parsed = new URL(link, getBrowserOrigin() || "http://localhost");
+    return parsed.searchParams.get("id") || "";
+  } catch {
+    return "";
+  }
+};
+
+const toAbsoluteUrl = (value: string) => {
+  const link = String(value || "").trim();
+  if (!link || link === "#") return "";
+  if (/^(https?:|data:|blob:)/i.test(link)) return link;
+
+  const origin = getBrowserOrigin();
+  if (!origin) return link;
+
+  try {
+    return new URL(link, origin).href;
+  } catch {
+    return link;
+  }
+};
+
+const getAttachmentExportLink = (file: ActivityAttachment) => {
+  if (file.directUrl) return toAbsoluteUrl(file.directUrl);
+
+  const publicFileBaseUrl = getPublicFileBaseUrl();
+  const proxyFileId = getProxyFileId(file.url);
+  if (publicFileBaseUrl && proxyFileId) {
+    return `${publicFileBaseUrl}/${encodeURIComponent(proxyFileId)}`;
+  }
+
+  return toAbsoluteUrl(file.url);
+};
+
 const toAttachmentLinks = (entry: ActivityEntry, kind?: "image" | "document") =>
   entry.attachments
     .filter((file) => (kind ? file.type === kind : true))
-    .map((file) => file.url)
+    .map((file) => getAttachmentExportLink(file))
+    .filter(Boolean)
     .join(" | ");
 
 const toReferenceLinks = (value: string) =>
@@ -151,47 +202,78 @@ const toReferenceLinks = (value: string) =>
     .filter(Boolean)
     .join(" | ");
 
-export const buildEntryExportRows = (entries: ActivityEntry[]) =>
-  entries.map((entry) => ({
-    ID: entry.uniqueId,
-    Status: entry.status,
-    Date: formatDate(entry.date),
-    Project: entry.project,
-    Activity: entry.activityName,
-    ActivityCode: entry.activityCode,
-    ActivityType: entry.activityType,
-    District: entry.district,
-    Upazila: entry.upazila,
-    Union: entry.union,
-    Venue: entry.venue,
-    ImplementedBy: entry.implementedBy,
-    Participants: entry.grandTotal,
-    ParticipantDetails:
-      entry.participants
-        .map((line) => `${line.categoryLabel}: M${line.male}, F${line.female}, T${line.male + line.female}`)
-        .join(" | ") || "-",
-    Male: entry.totalMale,
-    Female: entry.totalFemale,
-    Budget: entry.totalBudget,
-    Expenses: entry.totalExpenses,
-    VariancePercent: Number(entry.variance.toFixed(2)),
-    ReferenceLinks: toReferenceLinks(entry.referenceLink),
-    Notes: entry.notes,
-    AIReport: entry.aiReport,
-    AttachmentCount: entry.attachments.length,
-    AttachmentNames: toAttachmentSummary(entry),
-    AttachmentLinks: toAttachmentLinks(entry),
-    ImageLinks: toAttachmentLinks(entry, "image"),
-    DocumentLinks: toAttachmentLinks(entry, "document"),
-    ImageNames: toAttachmentSummary(entry, "image"),
-    DocumentNames: toAttachmentSummary(entry, "document"),
-    CreatedBy: entry.createdBy,
-    CreatedAt: entry.createdAt,
-    UpdatedAt: entry.updatedAt,
-    SubmittedAt: entry.submittedAt || "",
-    ReviewedBy: entry.reviewedBy || "",
-    ReviewedAt: entry.reviewedAt || ""
-  }));
+const getParticipantCategoryLabels = (entries: ActivityEntry[]) =>
+  Array.from(
+    new Set(
+      entries.flatMap((entry) =>
+        entry.participants.map((line) => line.categoryLabel || line.categoryKey).filter(Boolean)
+      )
+    )
+  );
+
+const getParticipantExportHeader = (label: string, metric: (typeof participantMetricHeaders)[number]) =>
+  `Participant - ${label} ${metric}`;
+
+export const buildEntryExportHeaders = (entries: ActivityEntry[]) => [
+  ...entryExportHeaders,
+  ...getParticipantCategoryLabels(entries).flatMap((label) =>
+    participantMetricHeaders.map((metric) => getParticipantExportHeader(label, metric))
+  )
+];
+
+export const buildEntryExportRows = (entries: ActivityEntry[]): ExportRow[] => {
+  const participantLabels = getParticipantCategoryLabels(entries);
+
+  return entries.map((entry) => {
+    const row: ExportRow = {
+      ID: entry.uniqueId,
+      Status: entry.status,
+      Date: formatDate(entry.date),
+      Project: entry.project,
+      Activity: entry.activityName,
+      ActivityCode: entry.activityCode,
+      ActivityType: entry.activityType,
+      District: entry.district,
+      Upazila: entry.upazila,
+      Union: entry.union,
+      Venue: entry.venue,
+      ImplementedBy: entry.implementedBy,
+      Participants: entry.grandTotal,
+      Male: entry.totalMale,
+      Female: entry.totalFemale,
+      Budget: entry.totalBudget,
+      Expenses: entry.totalExpenses,
+      VariancePercent: Number(entry.variance.toFixed(2)),
+      ReferenceLinks: toReferenceLinks(entry.referenceLink),
+      Notes: entry.notes,
+      AIReport: entry.aiReport,
+      AttachmentCount: entry.attachments.length,
+      AttachmentNames: toAttachmentSummary(entry),
+      AttachmentLinks: toAttachmentLinks(entry),
+      ImageLinks: toAttachmentLinks(entry, "image"),
+      DocumentLinks: toAttachmentLinks(entry, "document"),
+      ImageNames: toAttachmentSummary(entry, "image"),
+      DocumentNames: toAttachmentSummary(entry, "document"),
+      CreatedBy: entry.createdBy,
+      CreatedAt: entry.createdAt,
+      UpdatedAt: entry.updatedAt,
+      SubmittedAt: entry.submittedAt || "",
+      ReviewedBy: entry.reviewedBy || "",
+      ReviewedAt: entry.reviewedAt || ""
+    };
+
+    participantLabels.forEach((label) => {
+      const matchingRows = entry.participants.filter((line) => (line.categoryLabel || line.categoryKey) === label);
+      const male = matchingRows.reduce((sum, line) => sum + line.male, 0);
+      const female = matchingRows.reduce((sum, line) => sum + line.female, 0);
+      row[getParticipantExportHeader(label, "Male")] = male;
+      row[getParticipantExportHeader(label, "Female")] = female;
+      row[getParticipantExportHeader(label, "Total")] = male + female;
+    });
+
+    return row;
+  });
+};
 
 export const buildAttachmentExportRows = (entries: ActivityEntry[]) =>
   entries.flatMap((entry) =>
@@ -207,7 +289,7 @@ export const buildAttachmentExportRows = (entries: ActivityEntry[]) =>
       FileName: file.name,
       FileType: file.type,
       FileSizeKB: file.sizeKb,
-      FileLink: file.url,
+      FileLink: getAttachmentExportLink(file),
       ReferenceLinks: toReferenceLinks(entry.referenceLink)
     }))
   );
@@ -237,10 +319,11 @@ export const exportEntriesToCsv = (
   fileName = `${buildReportFileName("praan-export")}.csv`
 ) => {
   const rows = buildEntryExportRows(entries);
+  const headers = buildEntryExportHeaders(entries);
   const csv = [
-    entryExportHeaders,
+    headers,
     ...rows.map((row) =>
-      entryExportHeaders.map((header) => escapeCsvValue(row[header] ?? ""))
+      headers.map((header) => escapeCsvValue(row[header] ?? ""))
     )
   ]
     .map((line) => line.join(","))
@@ -258,18 +341,29 @@ export const exportEntriesToCsv = (
 export const exportEntriesReportToExcel = (
   entries: ActivityEntry[],
   filters: ReportFilters,
+  orgSettings?: OrgSettings,
   fileName = `${buildReportFileName("praan-report")}.xlsx`
 ) => {
   const workbook = XLSX.utils.book_new();
 
-  const filterSheet = XLSX.utils.json_to_sheet(
-    buildFilterList(filters).map((label) => ({
-      Filter: label
-    }))
+  const infoSheet = XLSX.utils.json_to_sheet(
+    [
+      ...(orgSettings ? [
+        { Field: "Organization", Value: orgSettings.orgName },
+        ...(orgSettings.orgAddress ? [{ Field: "Address", Value: orgSettings.orgAddress }] : []),
+        ...(orgSettings.orgPhone ? [{ Field: "Phone", Value: orgSettings.orgPhone }] : []),
+        ...(orgSettings.orgEmail ? [{ Field: "Email", Value: orgSettings.orgEmail }] : []),
+      ] : []),
+      { Field: "Report", Value: "Activity Report" },
+      { Field: "Generated", Value: new Date().toLocaleString("en-GB") },
+      ...buildFilterList(filters).map((label) => ({ Field: "Filter", Value: label }))
+    ]
   );
-  XLSX.utils.book_append_sheet(workbook, filterSheet, "Filters");
+  XLSX.utils.book_append_sheet(workbook, infoSheet, "Info");
 
-  const dataSheet = XLSX.utils.json_to_sheet(buildEntryExportRows(entries), { header: [...entryExportHeaders] });
+  const dataSheet = XLSX.utils.json_to_sheet(buildEntryExportRows(entries), {
+    header: buildEntryExportHeaders(entries)
+  });
   XLSX.utils.book_append_sheet(workbook, dataSheet, "Activities");
 
   const attachmentSheet = XLSX.utils.json_to_sheet(buildAttachmentExportRows(entries), {
@@ -280,11 +374,27 @@ export const exportEntriesReportToExcel = (
   XLSX.writeFile(workbook, fileName);
 };
 
-export const exportEntriesReportToPdf = (
+const getBase64Image = async (url: string): Promise<string | null> => {
+  try {
+    const res = await fetch(url);
+    const blob = await res.blob();
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+};
+
+export const exportEntriesReportToPdf = async (
   entries: ActivityEntry[],
   filters: ReportFilters,
-  orgName = "PRAAN"
+  orgSettings?: OrgSettings
 ) => {
+  const orgName = orgSettings?.orgName || "PRAAN";
   const summary = summarizeEntries(entries);
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const pageHeight = doc.internal.pageSize.getHeight();
@@ -298,16 +408,39 @@ export const exportEntriesReportToPdf = (
     y = 48;
   };
 
+  // Header block with logo + org name + address
   doc.setFillColor(15, 79, 168);
-  doc.roundedRect(marginX, y, pageWidth - marginX * 2, 58, 16, 16, "F");
+  doc.roundedRect(marginX, y, pageWidth - marginX * 2, orgSettings?.orgAddress ? 78 : 58, 16, 16, "F");
+
+  let logoX = marginX + 18;
+  if (orgSettings?.logoUrl) {
+    try {
+      const logoBase64 = await getBase64Image(orgSettings.logoUrl);
+      if (logoBase64) {
+        doc.addImage(logoBase64, "PNG", marginX + 14, y + 10, 32, 32);
+        logoX = marginX + 58;
+      }
+    } catch {
+      // fallback — no logo
+    }
+  }
+
   doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(18);
-  doc.text(`${orgName} Activity Report`, marginX + 18, y + 24);
+  doc.text(`${orgName} Activity Report`, logoX, y + 24);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
-  doc.text(`Generated on ${new Date().toLocaleString("en-GB")}`, marginX + 18, y + 44);
-  y += 82;
+  doc.text(`Generated on ${new Date().toLocaleString("en-GB")}`, logoX, y + 42);
+
+  if (orgSettings?.orgAddress || orgSettings?.orgPhone || orgSettings?.orgEmail) {
+    const details = [orgSettings.orgAddress, orgSettings.orgPhone, orgSettings.orgEmail].filter(Boolean).join(" | ");
+    doc.setFontSize(9);
+    doc.text(details, logoX, y + 56);
+    y += 102;
+  } else {
+    y += 82;
+  }
 
   doc.setTextColor(16, 38, 63);
   doc.setFont("helvetica", "bold");
@@ -381,8 +514,9 @@ export const exportEntriesReportToPdf = (
 export const printEntriesReport = (
   entries: ActivityEntry[],
   filters: ReportFilters,
-  orgName = "PRAAN"
+  orgSettings?: OrgSettings
 ) => {
+  const orgName = orgSettings?.orgName || "PRAAN";
   const summary = summarizeEntries(entries);
   const printWindow = window.open("", "_blank", "noopener,noreferrer,width=1140,height=980");
 
@@ -390,6 +524,8 @@ export const printEntriesReport = (
     console.warn("Popup blocked. Please allow popups to print the report.");
     return;
   }
+
+  const orgDetails = [orgSettings?.orgAddress, orgSettings?.orgPhone, orgSettings?.orgEmail].filter(Boolean).join(" | ");
 
   const html = `<!doctype html>
 <html lang="en">
@@ -414,9 +550,26 @@ export const printEntriesReport = (
         padding: 20px;
         margin-bottom: 18px;
       }
+      .hero-logo {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 10px;
+      }
+      .hero-logo img {
+        width: 48px;
+        height: 48px;
+        object-fit: contain;
+        border-radius: 8px;
+      }
       .meta {
         color: #52657f;
         font-size: 13px;
+      }
+      .org-details {
+        color: #52657f;
+        font-size: 12px;
+        margin-top: 4px;
       }
       .filters,
       .summary {
@@ -456,8 +609,10 @@ export const printEntriesReport = (
   </head>
   <body>
     <section class="hero">
+      ${orgSettings?.logoUrl ? `<div class="hero-logo"><img src="${escapeHtml(orgSettings.logoUrl)}" alt="Logo" /></div>` : ""}
       <h1>${escapeHtml(orgName)} Activity Report</h1>
       <div class="meta">Generated on ${escapeHtml(new Date().toLocaleString("en-GB"))}</div>
+      ${orgDetails ? `<div class="org-details">${escapeHtml(orgDetails)}</div>` : ""}
     </section>
 
     <h2>Applied Filters</h2>

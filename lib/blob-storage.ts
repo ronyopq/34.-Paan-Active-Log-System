@@ -73,7 +73,8 @@ export const uploadBlobFile = async (input: {
   });
 
   return {
-    fileId: input.fileId
+    fileId: input.fileId,
+    directUrl: client.url
   };
 };
 

@@ -4,6 +4,7 @@ export type NavItem = {
   href: string;
   label: string;
   icon: string;
+  group?: string;
 };
 
 const userNav: NavItem[] = [
@@ -13,8 +14,8 @@ const userNav: NavItem[] = [
   { href: "/calendar", label: "Calendar", icon: "bi-calendar3" },
   { href: "/reports", label: "Report", icon: "bi-file-earmark-bar-graph" },
   { href: "/files", label: "Files", icon: "bi-folder" },
-  { href: "/profile", label: "Profile", icon: "bi-person" },
-  { href: "/logs/login", label: "Login Log", icon: "bi-clock-history" }
+  { href: "/profile", label: "Profile", icon: "bi-person", group: "settings" },
+  { href: "/logs/login", label: "Login Log", icon: "bi-clock-history", group: "settings" }
 ];
 
 const managerNav: NavItem[] = [
@@ -25,8 +26,8 @@ const managerNav: NavItem[] = [
   { href: "/reports", label: "Report", icon: "bi-file-earmark-bar-graph" },
   { href: "/files", label: "Files", icon: "bi-folder" },
   { href: "/notifications", label: "Notifications", icon: "bi-bell" },
-  { href: "/logs/user", label: "User Log", icon: "bi-list-ul" },
-  { href: "/profile", label: "Profile", icon: "bi-person" }
+  { href: "/logs/user", label: "User Log", icon: "bi-list-ul", group: "settings" },
+  { href: "/profile", label: "Profile", icon: "bi-person", group: "settings" }
 ];
 
 const adminNav: NavItem[] = [
@@ -38,9 +39,9 @@ const adminNav: NavItem[] = [
   { href: "/reports", label: "Report", icon: "bi-file-earmark-bar-graph" },
   { href: "/files", label: "Files", icon: "bi-folder" },
   { href: "/notifications", label: "Notifications", icon: "bi-bell" },
-  { href: "/logs/user", label: "User Log", icon: "bi-list-ul" },
-  { href: "/admin", label: "Settings", icon: "bi-sliders" },
-  { href: "/profile", label: "Profile", icon: "bi-person" }
+  { href: "/logs/user", label: "User Log", icon: "bi-list-ul", group: "settings" },
+  { href: "/admin", label: "Settings", icon: "bi-sliders", group: "settings" },
+  { href: "/profile", label: "Profile", icon: "bi-person", group: "settings" }
 ];
 
 export const getNavByRole = (role: Role): NavItem[] => {

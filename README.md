@@ -22,6 +22,7 @@ npm install
 DATABASE_URL=postgresql://user:password@host:5432/pams?sslmode=require
 AZURE_STORAGE_CONNECTION_STRING=DefaultEndpointsProtocol=https;AccountName=youraccount;AccountKey=yourkey;EndpointSuffix=core.windows.net
 AZURE_STORAGE_CONTAINER=activities
+NEXT_PUBLIC_FILE_BASE_URL=https://youraccount.blob.core.windows.net/activities
 APP_BASE_URL=http://localhost:3000
 API_WRITE_TOKEN=your-strong-random-token
 NEXT_PUBLIC_DATA_MODE=local
@@ -39,6 +40,7 @@ Open [http://localhost:3000](http://localhost:3000).
 - `DATABASE_URL`: Azure PostgreSQL connection string
 - `AZURE_STORAGE_CONNECTION_STRING`: Azure Blob Storage connection string
 - `AZURE_STORAGE_CONTAINER`: Blob container name, defaults to `activities`
+- `NEXT_PUBLIC_FILE_BASE_URL`: Optional public file base URL used by Excel exports to convert old `/api/file?id=...` links into direct file links
 - `APP_BASE_URL`: Primary site URL, used to validate browser write requests in production
 - `API_WRITE_TOKEN`: Optional bearer token for scripted/server-to-server writes
 - `NEXT_PUBLIC_DATA_MODE`: Use `remote` to enable PostgreSQL sync from the browser, otherwise `local`

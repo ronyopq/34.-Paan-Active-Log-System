@@ -4,7 +4,6 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
-import { SearchableOption, SearchableSelect } from "@/components/common/searchable-select";
 import { useAppContext } from "@/components/providers/app-context";
 import { buildAttachmentFileName, getFileExtension, getMimeExtension, replaceFileExtension } from "@/lib/attachments";
 import { calcUtilization, calcVariance, formatCurrency } from "@/lib/format";
@@ -34,12 +33,12 @@ const docUploadCategories: AttachmentCategory[] = [
   "Bill Voucher"
 ];
 const todayIso = new Date().toISOString().slice(0, 10);
+const AUTO_DRAFT_KEY = "praan_new_activity_autosave_v1";
 
 type FormState = {
   date: string;
   project: string;
   activityName: string;
-  activityOther: string;
   activityCode: string;
   activityType: string;
   venue: string;
@@ -64,9 +63,30 @@ type UploadedItem = {
   kind: "image" | "document";
   previewUrl: string | null;
   serverUrl: string;
+  directUrl?: string;
   status: "preparing" | "uploading" | "uploaded" | "failed";
   progress: number;
 };
+
+type NewActivityAutoDraft = {
+  form: FormState;
+  participants: ParticipantLine[];
+  filesByCategory: Record<AttachmentCategory, UploadedItem[]>;
+  confirmed: boolean;
+  open: { info: boolean; participants: boolean; financial: boolean; uploads: boolean };
+  activeStep?: FormStep;
+  savedAt: string;
+};
+
+type FormStep = "info" | "participants" | "financial" | "uploads" | "review";
+
+const wizardSteps: Array<{ key: FormStep; title: string; icon: string }> = [
+  { key: "info", title: "Activity Info", icon: "bi-file-earmark-text" },
+  { key: "participants", title: "Participants", icon: "bi-people" },
+  { key: "financial", title: "Financial", icon: "bi-cash-coin" },
+  { key: "uploads", title: "Uploads", icon: "bi-paperclip" },
+  { key: "review", title: "Review", icon: "bi-check2-circle" }
+];
 
 type UploadApiResponse = {
   ok: boolean;
@@ -75,6 +95,7 @@ type UploadApiResponse = {
   mimeType: string;
   type: "image" | "document";
   sizeKb: number;
+  directUrl?: string;
   message?: string;
 };
 
@@ -87,11 +108,52 @@ const createEmptyUploads = (): Record<AttachmentCategory, UploadedItem[]> => ({
   Photos: []
 });
 
+const hasFormContent = (form: FormState, participants: ParticipantLine[], files: Record<AttachmentCategory, UploadedItem[]>) => {
+  const emptyForm = createEmptyForm();
+  const hasText = Object.keys(emptyForm).some((key) => {
+    const field = key as keyof FormState;
+    const value = form[field];
+    const fallback = emptyForm[field];
+    if (Array.isArray(value)) {
+      return value.some((item) => item.trim()) || value.length !== (fallback as string[]).length;
+    }
+    return String(value || "").trim() !== String(fallback || "").trim();
+  });
+  const hasParticipants = participants.some((line) => line.male > 0 || line.female > 0);
+  const hasFiles = uploadCategories.some((category) => files[category]?.some((item) => item.status === "uploaded"));
+
+  return hasText || hasParticipants || hasFiles;
+};
+
+const getRestorableUploads = (files: Record<AttachmentCategory, UploadedItem[]>) => {
+  const next = createEmptyUploads();
+
+  uploadCategories.forEach((category) => {
+    next[category] = (files[category] || [])
+      .filter((item) => item.status === "uploaded" && item.serverUrl)
+      .map((item) => ({
+        ...item,
+        previewUrl: item.kind === "image" && item.serverUrl ? item.serverUrl : null,
+        status: "uploaded",
+        progress: 100
+      }));
+  });
+
+  return next;
+};
+
+const saveAutoDraftToStorage = (draft: NewActivityAutoDraft) => {
+  try {
+    window.localStorage.setItem(AUTO_DRAFT_KEY, JSON.stringify(draft));
+  } catch (error) {
+    console.warn("Auto draft save failed", error);
+  }
+};
+
 const createEmptyForm = (): FormState => ({
   date: todayIso,
   project: "",
   activityName: "",
-  activityOther: "",
   activityCode: "",
   activityType: "",
   venue: "",
@@ -136,6 +198,7 @@ const toUploadsFromEntry = (entry: ActivityEntry): Record<AttachmentCategory, Up
       kind: attachment.type,
       previewUrl: attachment.type === "image" ? attachment.url : null,
       serverUrl: attachment.url || "#",
+      directUrl: attachment.directUrl,
       status: "uploaded",
       progress: 100
     });
@@ -160,6 +223,7 @@ const toAttachments = (
       category,
       name: buildAttachmentFileName(uniqueId, activityName, item.sequence, item.name, item.mimeType),
       url: item.serverUrl,
+      directUrl: item.directUrl,
       type: item.kind,
       sizeKb: Math.max(1, Math.round(item.size / 1024))
     });
@@ -168,6 +232,23 @@ const toAttachments = (
 };
 
 const shortFileName = (name: string, max = 10) => (name.length <= max ? name : `${name.slice(0, max)}...`);
+const docAcceptTypes = ".pdf,.doc,.docx,.xls,.xlsx,.csv,image/jpeg,image/png,image/webp";
+
+const uploadCategoryIcons: Record<AttachmentCategory, string> = {
+  "Implementation Plan": "bi-diagram-3",
+  "Participants List": "bi-people",
+  "Press Release": "bi-megaphone",
+  "Activity Report": "bi-file-earmark-text",
+  "Bill Voucher": "bi-receipt",
+  Photos: "bi-images"
+};
+
+const getUploadStatusText = (item: UploadedItem) => {
+  if (item.status === "preparing") return "Optimizing";
+  if (item.status === "uploading") return `${item.progress}%`;
+  if (item.status === "failed") return "Failed";
+  return "Uploaded";
+};
 
 const moneyInput = (value: string) => {
   let digits = value.replace(/[^\d]/g, "");
@@ -212,7 +293,6 @@ const entryToForm = (entry: ActivityEntry): FormState => ({
   date: entry.date || todayIso,
   project: entry.project || "",
   activityName: entry.activityName || "",
-  activityOther: "",
   activityCode: entry.activityCode || "",
   activityType: entry.activityType || "",
   venue: entry.venue || "",
@@ -337,6 +417,12 @@ const isLocalDevHost = () => {
   return host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0" || host.endsWith(".local");
 };
 
+const resizeTextarea = (textarea: HTMLTextAreaElement | null) => {
+  if (!textarea) return;
+  textarea.style.height = "auto";
+  textarea.style.height = `${textarea.scrollHeight}px`;
+};
+
 export const NewActivityForm = () => {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -362,6 +448,11 @@ export const NewActivityForm = () => {
   const isEditMode = Boolean(editId && editEntry);
   const hydratedEditRef = useRef<string>("");
   const missingEditNoticeRef = useRef<string>("");
+  const venueTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const implementedByTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const notesTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const aiReportTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const autoDraftHydratedRef = useRef(false);
 
   const [form, setForm] = useState<FormState>(createEmptyForm());
   const [participants, setParticipants] = useState<ParticipantLine[]>([]);
@@ -373,7 +464,126 @@ export const NewActivityForm = () => {
   const [savingDraft, setSavingDraft] = useState(false);
   const [successEntry, setSuccessEntry] = useState<ActivityEntry | null>(null);
   const [open, setOpen] = useState({ info: true, participants: true, financial: true, uploads: true });
-  const [isNotesFullscreen, setIsNotesFullscreen] = useState(false);
+  const [activeStep, setActiveStep] = useState<FormStep>("info");
+  const [lastAutoSavedAt, setLastAutoSavedAt] = useState<string>("");
+  const [restoredDraftNotice, setRestoredDraftNotice] = useState(false);
+
+  const activeStepIndex = wizardSteps.findIndex((step) => step.key === activeStep);
+  const isReviewStep = activeStep === "review";
+  const isFirstStep = activeStepIndex <= 0;
+
+  const clearAutoDraft = () => {
+    window.localStorage.removeItem(AUTO_DRAFT_KEY);
+    setLastAutoSavedAt("");
+    setRestoredDraftNotice(false);
+  };
+
+  useEffect(() => {
+    document.body.classList.add("form-wizard-active");
+    return () => document.body.classList.remove("form-wizard-active");
+  }, []);
+
+  useEffect(() => {
+    resizeTextarea(venueTextareaRef.current);
+  }, [form.venue]);
+
+  useEffect(() => {
+    resizeTextarea(implementedByTextareaRef.current);
+  }, [form.implementedBy]);
+
+  useEffect(() => {
+    resizeTextarea(notesTextareaRef.current);
+  }, [form.notes]);
+
+  useEffect(() => {
+    resizeTextarea(aiReportTextareaRef.current);
+  }, [form.aiReport]);
+
+  useEffect(() => {
+    if (autoDraftHydratedRef.current) return;
+
+    if (editId) {
+      autoDraftHydratedRef.current = true;
+      return;
+    }
+
+    try {
+      const raw = window.localStorage.getItem(AUTO_DRAFT_KEY);
+      if (!raw) {
+        autoDraftHydratedRef.current = true;
+        return;
+      }
+
+      const draft = JSON.parse(raw) as Partial<NewActivityAutoDraft>;
+      if (!draft.form || !draft.filesByCategory) {
+        window.localStorage.removeItem(AUTO_DRAFT_KEY);
+        autoDraftHydratedRef.current = true;
+        return;
+      }
+
+      setForm({ ...createEmptyForm(), ...draft.form });
+      setParticipants(Array.isArray(draft.participants) ? draft.participants.map((line) => ({ ...line })) : []);
+      setFilesByCategory(getRestorableUploads(draft.filesByCategory));
+      setConfirmed(Boolean(draft.confirmed));
+      if (draft.open) setOpen(draft.open);
+      if (draft.activeStep && wizardSteps.some((step) => step.key === draft.activeStep)) {
+        setActiveStep(draft.activeStep);
+      }
+      setLastAutoSavedAt(draft.savedAt || "");
+      setRestoredDraftNotice(true);
+    } catch {
+      window.localStorage.removeItem(AUTO_DRAFT_KEY);
+    } finally {
+      autoDraftHydratedRef.current = true;
+    }
+  }, [editId, notify]);
+
+  useEffect(() => {
+    if (isEditMode || !autoDraftHydratedRef.current) return;
+
+    const timer = window.setTimeout(() => {
+      if (!hasFormContent(form, participants, filesByCategory)) {
+        window.localStorage.removeItem(AUTO_DRAFT_KEY);
+        return;
+      }
+
+      const draft: NewActivityAutoDraft = {
+        form,
+        participants,
+        filesByCategory: getRestorableUploads(filesByCategory),
+        confirmed,
+        open,
+        activeStep,
+        savedAt: new Date().toISOString()
+      };
+      saveAutoDraftToStorage(draft);
+      setLastAutoSavedAt(draft.savedAt);
+    }, 500);
+
+    return () => window.clearTimeout(timer);
+  }, [activeStep, confirmed, filesByCategory, form, isEditMode, open, participants]);
+
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (isEditMode || !hasFormContent(form, participants, filesByCategory)) return;
+
+      const draft: NewActivityAutoDraft = {
+        form,
+        participants,
+        filesByCategory: getRestorableUploads(filesByCategory),
+        confirmed,
+        open,
+        activeStep,
+        savedAt: new Date().toISOString()
+      };
+      saveAutoDraftToStorage(draft);
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [activeStep, confirmed, filesByCategory, form, isEditMode, open, participants]);
 
   useEffect(() => {
     if (!editId) {
@@ -447,7 +657,7 @@ export const NewActivityForm = () => {
     return Math.max(0, raw);
   }, [allUploads, hasPendingUploads]);
 
-  const projectOptions = useMemo<SearchableOption[]>(
+  const projectOptions = useMemo(
     () =>
       projectMap.map((item) => ({
         value: item.project,
@@ -458,7 +668,7 @@ export const NewActivityForm = () => {
     [projectMap, isEditMode, form.project]
   );
 
-  const activityOptions = useMemo<SearchableOption[]>(
+  const activityOptions = useMemo(
     () =>
       (selectedProjectMap?.activities || []).map((item) => ({
         value: item.name,
@@ -469,20 +679,30 @@ export const NewActivityForm = () => {
     [selectedProjectMap, isEditMode, form.activityName]
   );
 
-  const districtOptions = useMemo<SearchableOption[]>(
+  const districtOptions = useMemo(
     () => locationMap.map((item) => ({ value: item.district, label: item.district })),
     [locationMap]
   );
 
-  const upazilaOptions = useMemo<SearchableOption[]>(
+  const upazilaOptions = useMemo(
     () => upazilaList.map((item) => ({ value: item, label: item })),
     [upazilaList]
   );
 
-  const unionOptions = useMemo<SearchableOption[]>(
+  const unionOptions = useMemo(
     () => unionList.map((item) => ({ value: item, label: item })),
     [unionList]
   );
+
+  const addVenueChoice = (value: string) => {
+    const item = value.trim();
+    if (item && !venueOptions.includes(item)) setVenueOptions([...venueOptions, item]);
+  };
+
+  const addImplementedByChoice = (value: string) => {
+    const item = value.trim();
+    if (item && !implementedByOptions.includes(item)) setImplementedByOptions([...implementedByOptions, item]);
+  };
 
   const setProject = (project: string) => {
     if (!project) {
@@ -517,7 +737,6 @@ export const NewActivityForm = () => {
     setForm((prev) => ({
       ...prev,
       activityName: selected?.name || "",
-      activityOther: selected?.name === "Other" ? prev.activityOther : "",
       activityCode: selected?.code || "",
       activityType: selected?.type || ""
     }));
@@ -630,6 +849,7 @@ export const NewActivityForm = () => {
         mimeType: result.mimeType || initialItem.mimeType,
         kind: result.type || initialItem.kind,
         serverUrl: result.url,
+        directUrl: result.directUrl,
         size: Math.max(1, (result.sizeKb || Math.round(uploadFile.size / 1024)) * 1024)
       });
     } catch (error) {
@@ -639,7 +859,8 @@ export const NewActivityForm = () => {
           updateUploadItem(category, uploadId, {
             status: "uploaded",
             progress: 100,
-            serverUrl: dataUrl
+            serverUrl: dataUrl,
+            directUrl: dataUrl
           });
           return;
         } catch {
@@ -680,14 +901,12 @@ export const NewActivityForm = () => {
   const buildEntry = (status: EntryStatus): ActivityEntry => {
     const now = new Date().toISOString();
     const existing = isEditMode ? editEntry : null;
-    const resolvedActivityName =
-      form.activityName === "Other" ? form.activityOther.trim() || "Other" : form.activityName;
     return {
       uniqueId: existing?.uniqueId || buildId(entries, form.date),
       status,
       date: form.date,
       project: form.project,
-      activityName: resolvedActivityName,
+      activityName: form.activityName,
       activityType: form.activityType,
       activityCode: form.activityCode,
       venue: form.venue,
@@ -705,7 +924,7 @@ export const NewActivityForm = () => {
       referenceLink: form.referenceLinks.filter((link) => link.trim() !== "").join(", "),
       notes: form.notes,
       aiReport: form.aiReport,
-      attachments: toAttachments(filesByCategory, existing?.uniqueId || generatedId, resolvedActivityName),
+      attachments: toAttachments(filesByCategory, existing?.uniqueId || generatedId, form.activityName),
       createdBy: existing?.createdBy || user?.username || "unknown",
       createdAt: existing?.createdAt || now,
       updatedAt: now,
@@ -715,7 +934,72 @@ export const NewActivityForm = () => {
     };
   };
 
+  const getStepIssues = (step: FormStep) => {
+    const issues: string[] = [];
+
+    if (step === "info") {
+      if (!form.date) issues.push("Activity date is required.");
+      if (!form.project) issues.push("Project is required.");
+      if (!form.activityName) issues.push("Activity is required.");
+      if (!form.venue.trim()) issues.push("Venue is required.");
+      if (!form.implementedBy.trim()) issues.push("Implemented By is required.");
+      if (!form.district) issues.push("District is required.");
+      if (!form.upazila) issues.push("Upazila is required.");
+      if (!form.union) issues.push("Union is required.");
+    }
+
+    if (step === "participants") {
+      if (!participants.length) issues.push("Select a project to load participant categories.");
+      if (participants.length && grandTotal <= 0) issues.push("Enter at least one participant.");
+    }
+
+    if (step === "financial") {
+      if (budgetValue <= 0) issues.push("Approved budget must be greater than zero.");
+      if (!form.expenses) issues.push("Actual expenses are required.");
+    }
+
+    if (step === "uploads") {
+      if (hasPendingUploads) issues.push("Wait until file uploads are complete.");
+      if (hasFailedUploads) issues.push("Remove failed uploads before continuing.");
+    }
+
+    if (step === "review") {
+      wizardSteps
+        .filter((item) => item.key !== "review")
+        .forEach((item) => issues.push(...getStepIssues(item.key)));
+      if (!confirmed) issues.push("Confirm that all information is accurate.");
+    }
+
+    return issues;
+  };
+
+  const goToStep = (step: FormStep) => {
+    setActiveStep(step);
+    window.setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 0);
+  };
+
+  const goNext = () => {
+    const issues = getStepIssues(activeStep);
+    if (issues.length) {
+      notify(issues[0], "error");
+      return;
+    }
+
+    const nextStep = wizardSteps[Math.min(activeStepIndex + 1, wizardSteps.length - 1)]?.key;
+    if (nextStep) goToStep(nextStep);
+  };
+
+  const goBack = () => {
+    if (isFirstStep) {
+      router.push("/activities");
+      return;
+    }
+    const prevStep = wizardSteps[Math.max(activeStepIndex - 1, 0)]?.key;
+    if (prevStep) goToStep(prevStep);
+  };
+
   const reset = () => {
+    if (!isEditMode) clearAutoDraft();
     setForm(createEmptyForm());
     setParticipants([]);
     setFilesByCategory((prev) => {
@@ -729,6 +1013,7 @@ export const NewActivityForm = () => {
       return createEmptyUploads();
     });
     setConfirmed(false);
+    setActiveStep("info");
   };
 
   const saveOrUpdateEntry = (entry: ActivityEntry) => {
@@ -753,6 +1038,7 @@ export const NewActivityForm = () => {
     setSavingDraft(true);
     const entry = buildEntry("Draft");
     saveOrUpdateEntry(entry);
+    if (!isEditMode) clearAutoDraft();
 
     setTimeout(() => {
       setSavingDraft(false);
@@ -763,6 +1049,15 @@ export const NewActivityForm = () => {
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
     if (submitting) return;
+    if (!isReviewStep) {
+      goNext();
+      return;
+    }
+    const reviewIssues = getStepIssues("review");
+    if (reviewIssues.length) {
+      notify(reviewIssues[0], "error");
+      return;
+    }
     if (!confirmed) {
       notify("Please check the confirmation box before submitting.", "info");
       return;
@@ -779,6 +1074,7 @@ export const NewActivityForm = () => {
     setSubmitting(true);
     const entry = buildEntry("Submitted");
     saveOrUpdateEntry(entry);
+    if (!isEditMode) clearAutoDraft();
 
     setTimeout(() => {
       setSubmitting(false);
@@ -903,17 +1199,68 @@ export const NewActivityForm = () => {
             </div>
           </header>
 
+          {restoredDraftNotice && (
+            <section className="draft-restore-card">
+              <div>
+                <p className="mb-1 fw-semibold">Saved draft restored</p>
+                <small className="text-muted">
+                  Continue from your autosaved work or discard it to start fresh.
+                </small>
+              </div>
+              <div className="draft-restore-actions">
+                <button className="outline-btn" type="button" onClick={() => setRestoredDraftNotice(false)}>
+                  Continue
+                </button>
+                <button className="danger-outline" type="button" onClick={reset}>
+                  Discard
+                </button>
+              </div>
+            </section>
+          )}
+
+          <nav className="wizard-stepper" aria-label="Activity form steps">
+            {wizardSteps.map((step, index) => {
+              const stepIssues = getStepIssues(step.key);
+              const isActive = activeStep === step.key;
+              const isComplete = !stepIssues.length && index < activeStepIndex;
+              return (
+                <button
+                  key={step.key}
+                  className={clsx("wizard-step", isActive && "active", isComplete && "complete", stepIssues.length && "has-issues")}
+                  type="button"
+                  onClick={() => goToStep(step.key)}
+                >
+                  <span className="wizard-step-index">
+                    <i className={clsx("bi", isComplete ? "bi-check2" : step.icon)} />
+                  </span>
+                  <span>{step.title}</span>
+                </button>
+              );
+            })}
+          </nav>
+
+          <div className="draft-status-line">
+            <span>
+              Step {activeStepIndex + 1} of {wizardSteps.length}: <strong>{wizardSteps[activeStepIndex]?.title}</strong>
+            </span>
+            {!isEditMode && lastAutoSavedAt && (
+              <span className="draft-status-pill">
+                <i className="bi bi-cloud-check" /> Autosaved {new Date(lastAutoSavedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              </span>
+            )}
+          </div>
+
           <div className="d-grid gap-3">
-            <article className="section-card">
-              <button className="section-header" type="button" onClick={() => setOpen((prev) => ({ ...prev, info: !prev.info }))}>
+            <article className={clsx("section-card wizard-section", activeStep !== "info" && "wizard-section-hidden")}>
+              <button className="section-header" type="button" onClick={() => goToStep("info")}>
                 <span className="section-title-wrap">
                   <span className="section-index">1</span>
                   <i className="bi bi-file-earmark-text" />
                   <span>Activity Info</span>
                 </span>
-                <i className={clsx("bi", open.info ? "bi-chevron-up" : "bi-chevron-down")} />
+                <i className="bi bi-chevron-right" />
               </button>
-              {open.info && (
+              {activeStep === "info" && (
                 <div className="section-body">
                   <div className="row g-3">
                     <div className="col-md-6">
@@ -934,13 +1281,13 @@ export const NewActivityForm = () => {
                       <select
                         className="form-select premium-input"
                         value={form.project}
-                        onChange={(e) => setProject(e.target.value)}
+                        onChange={(event) => setProject(event.target.value)}
                         disabled={!availableProjects.length}
                       >
                         <option value="">Select project</option>
-                        {projectOptions.map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.label}
+                        {projectOptions.map((option) => (
+                          <option key={option.value} value={option.value} disabled={option.disabled}>
+                            {option.label}{option.hint ? ` (${option.hint})` : ""}
                           </option>
                         ))}
                       </select>
@@ -958,19 +1305,11 @@ export const NewActivityForm = () => {
                       >
                         <option value="">{selectedProjectMap ? "Select activity" : "Select project first"}</option>
                         {activityOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
+                          <option key={option.value} value={option.value} disabled={option.disabled}>
+                            {option.label}{option.hint ? ` (${option.hint})` : ""}
                           </option>
                         ))}
                       </select>
-                      {form.activityName === "Other" && (
-                        <input
-                          className="form-control premium-input mt-2"
-                          placeholder="Write other activity name"
-                          value={form.activityOther}
-                          onChange={(event) => setForm((prev) => ({ ...prev, activityOther: event.target.value }))}
-                        />
-                      )}
                     </div>
                     <div className="col-md-4">
                       <label className="form-label">Activity Code *</label>
@@ -979,33 +1318,31 @@ export const NewActivityForm = () => {
                     <div className="col-md-6">
                       <label className="form-label">Venue *</label>
                       <textarea
-                        className="form-control premium-input"
+                        ref={venueTextareaRef}
+                        className="form-control premium-input auto-grow-textarea compact-auto-grow-textarea"
+                        rows={2}
                         value={form.venue}
-                        onChange={(e) => {
-                          const target = e.currentTarget;
-                          target.style.height = "auto";
-                          target.style.height = `${target.scrollHeight}px`;
-                          setForm((prev) => ({ ...prev, venue: e.target.value }));
+                        onChange={(event) => {
+                          resizeTextarea(event.currentTarget);
+                          setForm((prev) => ({ ...prev, venue: event.target.value }));
                         }}
-                        rows={1}
+                        onBlur={() => addVenueChoice(form.venue)}
                         placeholder="Type venue"
-                        style={{ overflow: "hidden", resize: "none" }}
                       />
                     </div>
                     <div className="col-md-6">
                       <label className="form-label">Implemented By *</label>
                       <textarea
-                        className="form-control premium-input"
+                        ref={implementedByTextareaRef}
+                        className="form-control premium-input auto-grow-textarea compact-auto-grow-textarea"
+                        rows={2}
                         value={form.implementedBy}
-                        onChange={(e) => {
-                          const target = e.currentTarget;
-                          target.style.height = "auto";
-                          target.style.height = `${target.scrollHeight}px`;
-                          setForm((prev) => ({ ...prev, implementedBy: e.target.value }));
+                        onChange={(event) => {
+                          resizeTextarea(event.currentTarget);
+                          setForm((prev) => ({ ...prev, implementedBy: event.target.value }));
                         }}
-                        rows={1}
+                        onBlur={() => addImplementedByChoice(form.implementedBy)}
                         placeholder="Type implementer"
-                        style={{ overflow: "hidden", resize: "none" }}
                       />
                     </div>
                     <div className="col-md-4">
@@ -1013,12 +1350,12 @@ export const NewActivityForm = () => {
                       <select
                         className="form-select premium-input"
                         value={form.district}
-                        onChange={(e) => setDistrict(e.target.value)}
+                        onChange={(event) => setDistrict(event.target.value)}
                       >
                         <option value="">Select district</option>
-                        {districtOptions.map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.label}
+                        {districtOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
                           </option>
                         ))}
                       </select>
@@ -1028,13 +1365,13 @@ export const NewActivityForm = () => {
                       <select
                         className="form-select premium-input"
                         value={form.upazila}
-                        onChange={(e) => setUpazila(e.target.value)}
+                        onChange={(event) => setUpazila(event.target.value)}
                         disabled={!upazilaList.length}
                       >
                         <option value="">{upazilaList.length ? "Select upazila" : "Select district first"}</option>
-                        {upazilaOptions.map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.label}
+                        {upazilaOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
                           </option>
                         ))}
                       </select>
@@ -1044,13 +1381,13 @@ export const NewActivityForm = () => {
                       <select
                         className="form-select premium-input"
                         value={form.union}
-                        onChange={(e) => setForm((prev) => ({ ...prev, union: e.target.value }))}
+                        onChange={(event) => setForm((prev) => ({ ...prev, union: event.target.value }))}
                         disabled={!unionList.length}
                       >
                         <option value="">{unionList.length ? "Select union" : "Select upazila first"}</option>
-                        {unionOptions.map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.label}
+                        {unionOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
                           </option>
                         ))}
                       </select>
@@ -1060,20 +1397,20 @@ export const NewActivityForm = () => {
               )}
             </article>
 
-            <article className="section-card">
+            <article className={clsx("section-card wizard-section", activeStep !== "participants" && "wizard-section-hidden")}>
               <button
                 className="section-header"
                 type="button"
-                onClick={() => setOpen((prev) => ({ ...prev, participants: !prev.participants }))}
+                onClick={() => goToStep("participants")}
               >
                 <span className="section-title-wrap">
                   <span className="section-index">2</span>
                   <i className="bi bi-people" />
                   <span>Participants</span>
                 </span>
-                <i className={clsx("bi", open.participants ? "bi-chevron-up" : "bi-chevron-down")} />
+                <i className="bi bi-chevron-right" />
               </button>
-              {open.participants && (
+              {activeStep === "participants" && (
                 <div className="section-body">
                   <p className="text-muted mb-3">
                     Enter participant counts by category and gender. Totals are calculated automatically.
@@ -1253,16 +1590,16 @@ export const NewActivityForm = () => {
               )}
             </article>
 
-            <article className="section-card">
-              <button className="section-header" type="button" onClick={() => setOpen((prev) => ({ ...prev, financial: !prev.financial }))}>
+            <article className={clsx("section-card wizard-section", activeStep !== "financial" && "wizard-section-hidden")}>
+              <button className="section-header" type="button" onClick={() => goToStep("financial")}>
                 <span className="section-title-wrap">
                   <span className="section-index">3</span>
                   <i className="bi bi-cash-coin" />
                   <span>Financial</span>
                 </span>
-                <i className={clsx("bi", open.financial ? "bi-chevron-up" : "bi-chevron-down")} />
+                <i className="bi bi-chevron-right" />
               </button>
-              {open.financial && (
+              {activeStep === "financial" && (
                 <div className="section-body">
                   <p className="text-muted mb-3">Enter financial details in BDT. Variance is calculated automatically.</p>
                   <div className="row g-3">
@@ -1320,33 +1657,60 @@ export const NewActivityForm = () => {
               )}
             </article>
 
-            <article className="section-card">
-              <button className="section-header" type="button" onClick={() => setOpen((prev) => ({ ...prev, uploads: !prev.uploads }))}>
+            <article className={clsx("section-card wizard-section", activeStep !== "uploads" && "wizard-section-hidden")}>
+              <button className="section-header" type="button" onClick={() => goToStep("uploads")}>
                 <span className="section-title-wrap">
                   <span className="section-index">4</span>
                   <i className="bi bi-paperclip" />
                   <span>Uploads & Notes</span>
                 </span>
-                <i className={clsx("bi", open.uploads ? "bi-chevron-up" : "bi-chevron-down")} />
+                <i className="bi bi-chevron-right" />
               </button>
-              {open.uploads && (
+              {activeStep === "uploads" && (
                 <div className="section-body">
+                  <div className="upload-helper-card">
+                    <div>
+                      <p className="mb-1 fw-semibold">Attach supporting documents and photos</p>
+                      <small className="text-muted">Tap a card to upload from mobile camera, gallery, or files. Max 10 MB per file.</small>
+                    </div>
+                    {!!allUploads.length && <span className="upload-total-pill">{uploadCompleted}/{allUploads.length} uploaded</span>}
+                  </div>
+
                   <div className="upload-grid">
                     {docUploadCategories.map((category) => (
-                      <article className="upload-card" key={category}>
-                        <div className="d-flex justify-content-between align-items-center mb-2">
-                          <p className="mb-0 fw-semibold">{category}</p>
+                      <article className="upload-card modern-upload-card" key={category}>
+                        <div className="upload-card-head">
+                          <span className="upload-card-icon">
+                            <i className={`bi ${uploadCategoryIcons[category]}`} />
+                          </span>
+                          <div className="min-w-0">
+                            <p className="mb-0 fw-semibold text-truncate">{category}</p>
+                            <small className="text-muted">PDF, Word, Excel, CSV or image</small>
+                          </div>
                           <span className="badge-count">{filesByCategory[category].length}</span>
                         </div>
-                        <label className="upload-zone">
-                          <i className="bi bi-upload" /> Upload
-                          <input type="file" multiple className="d-none" onChange={(event) => onFileChange(category, event.target.files)} />
+                        <label className="upload-zone modern-upload-zone">
+                          <span className="upload-zone-icon"><i className="bi bi-cloud-arrow-up" /></span>
+                          <span>
+                            <strong>Tap to upload</strong>
+                            <small>Choose one or multiple files</small>
+                          </span>
+                          <input
+                            type="file"
+                            multiple
+                            accept={docAcceptTypes}
+                            className="d-none"
+                            onChange={(event) => {
+                              onFileChange(category, event.target.files);
+                              event.currentTarget.value = "";
+                            }}
+                          />
                         </label>
-                        <div className="d-grid gap-2 mt-2">
+                        <div className="upload-file-list">
                           {filesByCategory[category].map((item, index) => (
-                            <div className={clsx("file-chip", item.previewUrl && "file-chip-image")} key={item.id}>
+                            <div className={clsx("file-chip modern-file-chip", item.previewUrl && "file-chip-image")} key={item.id}>
                               <div className="file-chip-main min-w-0">
-                                <span className={clsx("file-mini-thumb", item.previewUrl && "file-mini-thumb-large-doc")}>
+                                <span className={clsx("file-mini-thumb modern-file-thumb", item.previewUrl && "modern-file-thumb-image")}>
                                   {item.previewUrl ? (
                                     <Image src={item.previewUrl} alt={item.name} fill className="object-contain" />
                                   ) : (
@@ -1355,7 +1719,10 @@ export const NewActivityForm = () => {
                                 </span>
                                 <div className="min-w-0">
                                   <span className="file-name-short" title={item.name}>
-                                    {shortFileName(item.name, 10)}
+                                    {shortFileName(item.name, 26)}
+                                  </span>
+                                  <span className={clsx("upload-status-pill", `upload-status-${item.status}`)}>
+                                    {getUploadStatusText(item)}
                                   </span>
                                   {item.status === "preparing" && (
                                     <small className="text-muted d-block mt-1">Optimizing image before upload...</small>
@@ -1381,7 +1748,7 @@ export const NewActivityForm = () => {
                   </div>
 
                   {!!allUploads.length && (
-                    <article className="panel-card mt-3 p-3">
+                    <article className="panel-card upload-progress-card mt-3 p-3">
                       <div className="d-flex justify-content-between align-items-center gap-2">
                         <p className="mb-0 fw-semibold">Server Upload Progress</p>
                         <strong>{uploadProgress}%</strong>
@@ -1405,32 +1772,34 @@ export const NewActivityForm = () => {
                   )}
                   <div className="row g-3 mt-2">
                     <div className="col-12 mb-3">
-                      <article
-                        className="upload-card photo-upload-card"
-                        style={{ padding: "1.5rem", border: "2px dashed color-mix(in srgb, var(--brand) 40%, var(--line))" }}
-                      >
-                        <div className="d-flex justify-content-between align-items-center mb-3">
-                          <p className="mb-0 fw-semibold fs-5">Photos</p>
-                          <span className="badge-count" style={{ fontSize: "1rem", padding: "0.25rem 0.6rem" }}>
-                            {filesByCategory.Photos.length}
-                          </span>
+                      <article className="upload-card photo-upload-card modern-photo-card">
+                        <div className="photo-upload-head">
+                          <div>
+                            <p className="mb-1 fw-semibold fs-5">Photos</p>
+                            <small className="text-muted">Add activity photos from camera or gallery</small>
+                          </div>
+                          <span className="badge-count badge-count-large">{filesByCategory.Photos.length}</span>
                         </div>
-                        <label className="upload-zone mb-3" style={{ padding: "2rem" }}>
-                          <span className="d-flex flex-column align-items-center gap-2">
-                            <i className="bi bi-image fs-4" />
-                            <span className="fs-5 fw-semibold">Upload Photos</span>
+                        <label className="upload-zone photo-upload-zone mb-3">
+                          <span className="photo-upload-icon"><i className="bi bi-camera" /></span>
+                          <span className="photo-upload-copy">
+                            <strong>Tap to add photos</strong>
+                            <small>Camera or gallery, multiple images supported</small>
                           </span>
                           <input
                             type="file"
                             accept="image/*"
                             multiple
                             className="d-none"
-                            onChange={(event) => onFileChange("Photos", event.target.files)}
+                            onChange={(event) => {
+                              onFileChange("Photos", event.target.files);
+                              event.currentTarget.value = "";
+                            }}
                           />
                         </label>
                         <div className="photo-preview-grid">
                           {filesByCategory.Photos.map((item, index) => (
-                            <div className="photo-preview-item" key={item.id}>
+                            <div className="photo-preview-item modern-photo-preview-item" key={item.id}>
                               <div className="photo-preview-media">
                                 {item.previewUrl ? (
                                   <Image src={item.previewUrl} alt={item.name} fill className="object-contain" />
@@ -1439,6 +1808,9 @@ export const NewActivityForm = () => {
                                     <i className="bi bi-image" />
                                   </span>
                                 )}
+                                <span className={clsx("photo-status-pill", `upload-status-${item.status}`)}>
+                                  {getUploadStatusText(item)}
+                                </span>
                               </div>
                               {item.status === "uploading" && (
                                 <div className="progress premium-progress">
@@ -1450,7 +1822,7 @@ export const NewActivityForm = () => {
                               )}
                               <div className="d-flex justify-content-between align-items-start gap-2">
                                 <span className="file-name-short" title={item.name}>
-                                  {shortFileName(item.name, 10)}
+                                  {shortFileName(item.name, 22)}
                                 </span>
                                 <button type="button" className="chip-close" onClick={() => removeFile("Photos", index)} aria-label="Remove photo">
                                   <i className="bi bi-x" />
@@ -1504,48 +1876,17 @@ export const NewActivityForm = () => {
                       </div>
                     </div>
                     
-                    <div
-                      className="col-12 mt-4"
-                      style={
-                        isNotesFullscreen
-                          ? {
-                              position: "fixed",
-                              top: 0,
-                              left: 0,
-                              right: 0,
-                              bottom: 0,
-                              zIndex: 9999,
-                              backgroundColor: "var(--background, #ffffff)",
-                              padding: "20px",
-                              display: "flex",
-                              flexDirection: "column",
-                            }
-                          : {}
-                      }
-                    >
-                      <div className="d-flex justify-content-between align-items-center mb-2">
-                        <label className="form-label mb-0">Activity Notes / Observations</label>
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-outline-secondary"
-                          onClick={() => setIsNotesFullscreen(!isNotesFullscreen)}
-                          title="Toggle Fullscreen"
-                        >
-                          <i className={isNotesFullscreen ? "bi bi-fullscreen-exit" : "bi bi-arrows-fullscreen"} />
-                        </button>
-                      </div>
+                    <div className="col-12 mt-4">
+                      <label className="form-label">Activity Notes / Observations</label>
                       <textarea
-                        className="form-control premium-input"
-                        rows={12}
+                        ref={notesTextareaRef}
+                        className="form-control premium-input auto-grow-textarea activity-notes-textarea"
+                        rows={7}
                         value={form.notes}
-                        onChange={(event) => setForm((prev) => ({ ...prev, notes: event.target.value }))}
-                        onInput={(event) => {
-                          if (isNotesFullscreen) return;
-                          const target = event.currentTarget;
-                          target.style.height = "auto";
-                          target.style.height = `${target.scrollHeight}px`;
+                        onChange={(event) => {
+                          resizeTextarea(event.currentTarget);
+                          setForm((prev) => ({ ...prev, notes: event.target.value }));
                         }}
-                        style={isNotesFullscreen ? { flex: 1, resize: "none", height: "100%" } : {}}
                       />
                     </div>
                     <div className="col-12">
@@ -1569,14 +1910,13 @@ export const NewActivityForm = () => {
                           </button>
                         </div>
                         <textarea
-                          className="form-control premium-input"
-                          rows={12}
+                          ref={aiReportTextareaRef}
+                          className="form-control premium-input auto-grow-textarea ai-report-textarea"
+                          rows={7}
                           value={form.aiReport}
-                          onChange={(event) => setForm((prev) => ({ ...prev, aiReport: event.target.value }))}
-                          onInput={(event) => {
-                            const target = event.currentTarget;
-                            target.style.height = "auto";
-                            target.style.height = `${target.scrollHeight}px`;
+                          onChange={(event) => {
+                            resizeTextarea(event.currentTarget);
+                            setForm((prev) => ({ ...prev, aiReport: event.target.value }));
                           }}
                         />
                         <button
@@ -1593,23 +1933,95 @@ export const NewActivityForm = () => {
               )}
             </article>
 
-            <article className="section-card">
-              <div className="section-body">
-                <label className="confirm-box">
-                  <input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />
-                  <span>I confirm that all the information provided above is accurate and complete.</span>
-                </label>
-                <button
-                  className="primary-btn submit-btn w-100 mt-3"
-                  type="submit"
-                  disabled={submitting}
-                >
-                  <i className="bi bi-send-fill" /> {isEditMode ? "Update Activity" : "Submit Activity"}
-                </button>
-              </div>
+            <article className={clsx("section-card wizard-section", activeStep !== "review" && "wizard-section-hidden")}>
+              <button className="section-header" type="button" onClick={() => goToStep("review")}>
+                <span className="section-title-wrap">
+                  <span className="section-index">5</span>
+                  <i className="bi bi-check2-circle" />
+                  <span>Review & Submit</span>
+                </span>
+                <i className="bi bi-chevron-right" />
+              </button>
+              {activeStep === "review" && (
+                <div className="section-body">
+                  <div className="review-grid">
+                    <article className="review-card">
+                      <p className="review-label">Activity</p>
+                      <h3>{form.activityName || "Not selected"}</h3>
+                      <p className="mb-0 text-muted">{form.project || "No project"}</p>
+                    </article>
+                    <article className="review-card">
+                      <p className="review-label">Location</p>
+                      <h3>{form.district || "-"}</h3>
+                      <p className="mb-0 text-muted">{form.upazila || "-"} / {form.union || "-"}</p>
+                    </article>
+                    <article className="review-card">
+                      <p className="review-label">Participants</p>
+                      <h3>{grandTotal}</h3>
+                      <p className="mb-0 text-muted">Male {totalMale} / Female {totalFemale}</p>
+                    </article>
+                    <article className="review-card">
+                      <p className="review-label">Financial</p>
+                      <h3>{formatCurrency(budgetValue)}</h3>
+                      <p className="mb-0 text-muted">Expense {formatCurrency(expenseValue)}</p>
+                    </article>
+                    <article className="review-card">
+                      <p className="review-label">Attachments</p>
+                      <h3>{attachmentCount}</h3>
+                      <p className="mb-0 text-muted">Photos {filesByCategory.Photos.length}</p>
+                    </article>
+                    <article className="review-card">
+                      <p className="review-label">Status</p>
+                      <h3>{hasFailedUploads ? "Needs attention" : hasPendingUploads ? "Uploading" : "Ready"}</h3>
+                      <p className="mb-0 text-muted">{uploadCompleted}/{allUploads.length || 0} file(s) uploaded</p>
+                    </article>
+                  </div>
+
+                  {getStepIssues("review").filter((issue) => issue !== "Confirm that all information is accurate.").length > 0 && (
+                    <div className="review-issues">
+                      <p className="mb-2 fw-semibold text-danger">Please fix these before submitting:</p>
+                      {getStepIssues("review")
+                        .filter((issue) => issue !== "Confirm that all information is accurate.")
+                        .map((issue) => (
+                          <p className="mb-1" key={issue}><i className="bi bi-exclamation-circle" /> {issue}</p>
+                        ))}
+                    </div>
+                  )}
+
+                  <label className="confirm-box mt-3">
+                    <input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />
+                    <span>I confirm that all the information provided above is accurate and complete.</span>
+                  </label>
+                  <button
+                    className="primary-btn submit-btn w-100 mt-3"
+                    type="submit"
+                    disabled={submitting}
+                  >
+                    <i className="bi bi-send-fill" /> {isEditMode ? "Update Activity" : "Submit Activity"}
+                  </button>
+                </div>
+              )}
             </article>
           </div>
         </section>
+
+        <div className="wizard-bottom-bar">
+          <button className="outline-btn" type="button" onClick={goBack}>
+            <i className="bi bi-arrow-left" /> Back
+          </button>
+          <button className="outline-btn wizard-save-btn" type="button" onClick={onSaveDraft} disabled={savingDraft}>
+            <i className="bi bi-cloud-arrow-down" /> {savingDraft ? "Saving" : "Save"}
+          </button>
+          {isReviewStep ? (
+            <button className="primary-btn wizard-next-btn" type="submit" disabled={submitting}>
+              <i className="bi bi-send-fill" /> {isEditMode ? "Update" : "Submit"}
+            </button>
+          ) : (
+            <button className="primary-btn wizard-next-btn" type="button" onClick={goNext}>
+              Next <i className="bi bi-arrow-right" />
+            </button>
+          )}
+        </div>
       </form>
     </>
   );

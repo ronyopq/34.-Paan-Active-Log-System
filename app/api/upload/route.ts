@@ -60,7 +60,7 @@ export async function POST(req: Request) {
 
     const fileId = createBlobFileId(fileName);
     const buffer = Buffer.from(await upload.arrayBuffer());
-    await uploadBlobFile({
+    const uploaded = await uploadBlobFile({
       fileId,
       fileName,
       mimeType,
@@ -75,6 +75,7 @@ export async function POST(req: Request) {
         type: mimeType.startsWith("image/") ? "image" : "document",
         mimeType,
         sizeKb: Math.max(1, Math.round(size / 1024)),
+        directUrl: uploaded.directUrl,
         url: `/api/file?id=${encodeURIComponent(fileId)}`
       },
       { headers: noStoreHeaders }

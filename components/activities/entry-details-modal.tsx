@@ -16,6 +16,7 @@ import {
 } from "@/lib/print-report";
 import { downloadAttachment, getAttachmentPreviewSrc, openAttachment } from "@/lib/file-actions";
 import { getFileIconClass } from "@/lib/file-icons";
+import { LightboxViewer, LightboxFile } from "@/components/activities/lightbox-viewer";
 
 type Props = {
   entry: ActivityEntry;
@@ -46,6 +47,7 @@ export const EntryDetailsModal = ({
   const [editMode, setEditMode] = useState(initialEditMode);
   const [deletePanelOpen, setDeletePanelOpen] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [lightboxFile, setLightboxFile] = useState<LightboxFile | null>(null);
 
   useEffect(() => {
     setDraft(entry);
@@ -517,7 +519,16 @@ export const EntryDetailsModal = ({
                     <div className="entry-file-list entry-file-list-compact">
                       {files.map((file) => (
                         <article key={file.id} className="attachment-item entry-attachment-card">
-                          <div className="entry-file-preview-box">
+                          <div className="entry-file-preview-box" style={{ cursor: file.type === "image" ? "pointer" : undefined }} onClick={file.type === "image" ? () => setLightboxFile({
+                            id: file.id,
+                            name: file.name,
+                            type: file.type,
+                            url: file.url,
+                            previewSrc: getAttachmentPreviewSrc(file),
+                            sizeKb: file.sizeKb,
+                            category: file.category,
+                            entryId: draft.uniqueId,
+                          }) : undefined}>
                             {file.type === "image" ? (
                               <Image src={getAttachmentPreviewSrc(file)} alt={file.name} fill className="object-contain" />
                             ) : (
@@ -582,6 +593,23 @@ export const EntryDetailsModal = ({
           </button>
         </footer>
       </div>
+
+      {lightboxFile && (
+        <LightboxViewer
+          file={lightboxFile}
+          files={getEntryAttachmentsWithDisplayNames(draft).map((f) => ({
+            id: f.id,
+            name: f.name,
+            type: f.type,
+            url: f.url,
+            previewSrc: getAttachmentPreviewSrc(f),
+            sizeKb: f.sizeKb,
+            category: f.category,
+            entryId: draft.uniqueId,
+          }))}
+          onClose={() => setLightboxFile(null)}
+        />
+      )}
     </div>
   );
 };

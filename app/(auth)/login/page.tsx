@@ -11,11 +11,13 @@ export default function LoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [nextPath, setNextPath] = useState("/activities/new");
+  const [remember, setRemember] = useState(true);
+  const [showPassword, setShowPassword] = useState(false);
+  const [nextPath, setNextPath] = useState("/dashboard");
 
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
-    setNextPath(query.get("next") || "/activities/new");
+    setNextPath(query.get("next") || "/dashboard");
   }, []);
 
   useEffect(() => {
@@ -28,7 +30,7 @@ export default function LoginPage() {
     event.preventDefault();
     setLoading(true);
 
-    const result = login(username, password);
+    const result = login(username, password, remember);
     if (!result.ok) {
       const message = result.message || "Login failed";
       notify(message, "error");
@@ -54,27 +56,51 @@ export default function LoginPage() {
 
         <form onSubmit={onSubmit} className="d-grid gap-3">
           <div>
-            <label className="form-label">Username</label>
+            <label className="form-label" htmlFor="login-username">Username</label>
             <input
+              id="login-username"
               className="form-control premium-input login-input"
               value={username}
               onChange={(event) => setUsername(event.target.value)}
               placeholder="Enter username"
               required
+              autoFocus
             />
           </div>
 
           <div>
-            <label className="form-label">Password</label>
+            <label className="form-label" htmlFor="login-password">Password</label>
+            <div className="password-input-wrap">
+              <input
+                id="login-password"
+                type={showPassword ? "text" : "password"}
+                className="form-control premium-input login-input"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="Enter password"
+                required
+              />
+              <button
+                type="button"
+                className="password-toggle-btn"
+                onClick={() => setShowPassword((prev) => !prev)}
+                tabIndex={-1}
+                aria-label={showPassword ? "Hide password" : "Show password"}
+              >
+                <i className={`bi ${showPassword ? "bi-eye-slash" : "bi-eye"}`} />
+              </button>
+            </div>
+          </div>
+
+          <div className="d-flex align-items-center gap-2">
             <input
-              type="password"
-              className="form-control premium-input login-input"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="Enter password"
-              required
+              id="login-remember"
+              type="checkbox"
+              className="form-check-input"
+              checked={remember}
+              onChange={(event) => setRemember(event.target.checked)}
             />
-            <small className="text-muted">Use your account password.</small>
+            <label className="form-label mb-0" htmlFor="login-remember">Remember me</label>
           </div>
 
           <button className="primary-btn w-100 login-submit-btn" disabled={loading}>

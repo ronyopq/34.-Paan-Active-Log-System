@@ -105,6 +105,9 @@ const cloneAuditLogs = (list: AuditLog[]): AuditLog[] =>
 
 const cloneOrgSettings = (settings: OrgSettings): OrgSettings => ({
   orgName: settings.orgName,
+  orgAddress: settings.orgAddress || "",
+  orgPhone: settings.orgPhone || "",
+  orgEmail: settings.orgEmail || "",
   logoUrl: settings.logoUrl
 });
 
@@ -177,7 +180,7 @@ export const normalizePersistedState = (
       : fallback.implementedByOptions,
     venueOptions: Array.isArray(parsed.venueOptions) ? [...parsed.venueOptions] : fallback.venueOptions,
     orgSettings:
-      parsed.orgSettings && parsed.orgSettings.orgName && parsed.orgSettings.logoUrl
+      parsed.orgSettings && parsed.orgSettings.orgName
         ? cloneOrgSettings(parsed.orgSettings)
         : fallback.orgSettings,
     reportSettings: parseReportSettings(parsed.reportSettings, fallback.reportSettings)

@@ -8,6 +8,7 @@ import { formatDate, normalizeText } from "@/lib/format";
 import { downloadAttachment, getAttachmentPreviewSrc, openAttachment } from "@/lib/file-actions";
 import { getFileIconClass } from "@/lib/file-icons";
 import { ActivityAttachment } from "@/lib/types";
+import { LightboxViewer, LightboxFile } from "@/components/activities/lightbox-viewer";
 
 type FileWithContext = ActivityAttachment & {
   entryId: string;
@@ -123,43 +124,29 @@ export default function FilesPage() {
       </section>
 
       {previewFile && (
-        <div className="modal-overlay" role="dialog" aria-modal="true">
-          <div className="panel-card file-preview-modal">
-            <div className="file-preview-head mb-3">
-              <div className="min-w-0">
-                <h3 className="h5 mb-1 file-preview-title" title={previewFile.name}>
-                  {previewFile.name}
-                </h3>
-                <p className="text-muted mb-0">
-                  {previewFile.category} - {previewFile.entryId}
-                </p>
-              </div>
-              <button className="icon-btn" onClick={() => setPreviewFile(null)} aria-label="Close preview">
-                <i className="bi bi-x-lg" />
-              </button>
-            </div>
-
-            <div className="file-preview-stage">
-              {previewFile.type === "image" ? (
-                <Image src={getAttachmentPreviewSrc(previewFile)} alt={previewFile.name} fill className="object-contain" />
-              ) : (
-                <div className="file-preview-doc">
-                  <i className={`bi ${getFileIconClass(previewFile.name)} file-type-icon-xxl`} />
-                  <p className="mb-0 mt-2">Preview is not available for this file type in-browser.</p>
-                </div>
-              )}
-            </div>
-
-            <div className="d-flex gap-2 justify-content-end mt-3">
-              <button className="outline-btn" onClick={() => openAttachment(previewFile)}>
-                <i className="bi bi-box-arrow-up-right" /> Open
-              </button>
-              <button className="primary-btn" onClick={() => downloadAttachment(previewFile)}>
-                <i className="bi bi-download" /> Download
-              </button>
-            </div>
-          </div>
-        </div>
+        <LightboxViewer
+          file={{
+            id: previewFile.id,
+            name: previewFile.name,
+            type: previewFile.type,
+            url: previewFile.url,
+            previewSrc: getAttachmentPreviewSrc(previewFile),
+            sizeKb: previewFile.sizeKb,
+            category: previewFile.category,
+            entryId: previewFile.entryId,
+          }}
+          files={files.map((f) => ({
+            id: f.id,
+            name: f.name,
+            type: f.type,
+            url: f.url,
+            previewSrc: getAttachmentPreviewSrc(f),
+            sizeKb: f.sizeKb,
+            category: f.category,
+            entryId: f.entryId,
+          }))}
+          onClose={() => setPreviewFile(null)}
+        />
       )}
     </div>
   );

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import clsx from "clsx";
 import { EntryDetailsModal } from "@/components/activities/entry-details-modal";
 import { KpiCard } from "@/components/common/kpi-card";
 import { Pagination } from "@/components/common/pagination";
@@ -107,7 +108,7 @@ export default function ActivitiesPage() {
           </p>
         </div>
         <div className="d-flex gap-2 align-items-center page-actions">
-          <button className="outline-btn" onClick={() => exportEntriesToExcel(filtered, "activities-detailed.xlsx")}>
+          <button className="outline-btn" onClick={() => exportEntriesToExcel(filtered, undefined, "activities-detailed.xlsx")}>
             <i className="bi bi-file-earmark-excel" /> Export Excel
           </button>
           <button className="primary-btn" onClick={exportCsv}>
@@ -282,7 +283,7 @@ export default function ActivitiesPage() {
         {pagedRows.map((entry) => (
           <article
             key={entry.uniqueId}
-            className="entry-mobile-card"
+            className={clsx("entry-mobile-card", `status-${entry.status.toLowerCase()}`)}
             onClick={() => {
               setSelectedId(entry.uniqueId);
             }}

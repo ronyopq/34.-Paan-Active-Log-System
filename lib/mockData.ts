@@ -14,6 +14,9 @@ import {
 
 export const orgSettings: OrgSettings = {
   orgName: "PRAAN",
+  orgAddress: "Dhaka, Bangladesh",
+  orgPhone: "+880 1700-000000",
+  orgEmail: "info@praan.org",
   logoUrl: "/logo.svg"
 };
 

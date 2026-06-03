@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import clsx from "clsx";
 import { EntryDetailsModal } from "@/components/activities/entry-details-modal";
 import { KpiCard } from "@/components/common/kpi-card";
-import { Pagination } from "@/components/common/pagination";
+import { StatusBadge } from "@/components/common/status-badge";
 import { useAppContext } from "@/components/providers/app-context";
 import { formatCurrency, formatDate } from "@/lib/format";
 import {
@@ -15,6 +16,9 @@ import {
   ReportFilters,
   summarizeEntries
 } from "@/lib/reporting";
+import { ActivityEntry } from "@/lib/types";
+
+const PAGE_SIZE = 20;
 
 const createFilters = (): ReportFilters => ({
   project: "",
@@ -29,12 +33,8 @@ const createFilters = (): ReportFilters => ({
 export default function ReportsPage() {
   const { visibleEntries, orgSettings } = useAppContext();
   const [filters, setFilters] = useState<ReportFilters>(createFilters);
-  const [page, setPage] = useState(1);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-
-  useEffect(() => {
-    setPage(1);
-  }, [filters]);
+  const [page, setPage] = useState(1);
 
   const projectOptions = useMemo(
     () => Array.from(new Set(visibleEntries.map((entry) => entry.project))).sort(),
@@ -86,7 +86,16 @@ export default function ReportsPage() {
     () => filterEntriesByReportFilters(visibleEntries, filters),
     [filters, visibleEntries]
   );
+  const totalPages = Math.max(1, Math.ceil(filteredEntries.length / PAGE_SIZE));
+  useEffect(() => {
+    setPage(1);
+  }, [filteredEntries.length]);
+  const paginatedEntries = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE;
+    return filteredEntries.slice(start, start + PAGE_SIZE);
+  }, [filteredEntries, page]);
   const summary = useMemo(() => summarizeEntries(filteredEntries), [filteredEntries]);
+  const selectedEntry = visibleEntries.find((entry) => entry.uniqueId === selectedId) || null;
   const topProject = useMemo(() => {
     const counts = new Map<string, number>();
     filteredEntries.forEach((entry) => {
@@ -106,10 +115,9 @@ export default function ReportsPage() {
   const updateFilter = <Key extends keyof ReportFilters>(key: Key, value: ReportFilters[Key]) =>
     setFilters((prev) => ({ ...prev, [key]: value }));
 
-  const pagedEntries = useMemo(() => {
-    const start = (page - 1) * 20;
-    return filteredEntries.slice(start, start + 20);
-  }, [filteredEntries, page]);
+  const openEntry = (entry: ActivityEntry) => {
+    setSelectedId(entry.uniqueId);
+  };
 
   return (
     <div className="d-grid gap-4">
@@ -133,7 +141,7 @@ export default function ReportsPage() {
             className="outline-btn"
             type="button"
             disabled={!filteredEntries.length}
-            onClick={() => exportEntriesReportToPdf(filteredEntries, filters, orgSettings.orgName)}
+            onClick={() => exportEntriesReportToPdf(filteredEntries, filters, orgSettings)}
           >
             <i className="bi bi-file-earmark-pdf" /> Export PDF
           </button>
@@ -141,7 +149,7 @@ export default function ReportsPage() {
             className="outline-btn"
             type="button"
             disabled={!filteredEntries.length}
-            onClick={() => printEntriesReport(filteredEntries, filters, orgSettings.orgName)}
+            onClick={() => printEntriesReport(filteredEntries, filters, orgSettings)}
           >
             <i className="bi bi-printer" /> Print
           </button>
@@ -149,7 +157,7 @@ export default function ReportsPage() {
             className="primary-btn"
             type="button"
             disabled={!filteredEntries.length}
-            onClick={() => exportEntriesReportToExcel(filteredEntries, filters)}
+            onClick={() => exportEntriesReportToExcel(filteredEntries, filters, orgSettings)}
           >
             <i className="bi bi-file-earmark-excel" /> Export Excel
           </button>
@@ -324,16 +332,16 @@ export default function ReportsPage() {
             </tr>
           </thead>
           <tbody>
-            {pagedEntries.length ? (
-              pagedEntries.map((entry) => (
+            {paginatedEntries.length ? (
+              paginatedEntries.map((entry) => (
                 <tr
                   key={entry.uniqueId}
                   className="entry-row-clickable"
-                  onClick={() => setSelectedId(entry.uniqueId)}
+                  onClick={() => openEntry(entry)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
-                      setSelectedId(entry.uniqueId);
+                      openEntry(entry);
                     }
                   }}
                   tabIndex={0}
@@ -359,7 +367,9 @@ export default function ReportsPage() {
                   </td>
                   <td>{formatCurrency(entry.totalBudget)}</td>
                   <td>{formatCurrency(entry.totalExpenses)}</td>
-                  <td>{entry.status}</td>
+                  <td>
+                    <StatusBadge status={entry.status} />
+                  </td>
                 </tr>
               ))
             ) : (
@@ -375,17 +385,94 @@ export default function ReportsPage() {
             )}
           </tbody>
         </table>
-        {filteredEntries.length > 0 && (
-          <div className="p-3 border-top bg-white">
-            <Pagination page={page} total={filteredEntries.length} pageSize={20} onPageChange={setPage} />
+      </section>
+
+      <section className="entries-mobile-list report-mobile-list">
+        {paginatedEntries.length ? (
+          paginatedEntries.map((entry) => (
+            <article
+              key={entry.uniqueId}
+              className={clsx("entry-mobile-card report-mobile-card", `status-${entry.status.toLowerCase()}`)}
+              onClick={() => openEntry(entry)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  openEntry(entry);
+                }
+              }}
+              tabIndex={0}
+            >
+              <div className="d-flex justify-content-between align-items-start gap-2">
+                <div className="min-w-0">
+                  <p className="mono text-success fw-semibold mb-1">{entry.uniqueId}</p>
+                  <p className="fw-semibold mb-1">{entry.activityName}</p>
+                  <p className="text-muted mb-0">{entry.project}</p>
+                </div>
+                <StatusBadge status={entry.status} />
+              </div>
+              <div className="entry-mobile-meta">
+                <span>Date: {formatDate(entry.date)}</span>
+                <span>
+                  Location: {entry.district}, {entry.upazila}, {entry.union}
+                </span>
+                <span>
+                  Participants: {entry.grandTotal} ({entry.totalMale}M/{entry.totalFemale}F)
+                </span>
+                <span>
+                  Budget: {formatCurrency(entry.totalBudget)} | Exp: {formatCurrency(entry.totalExpenses)}
+                </span>
+              </div>
+              <button
+                className="outline-btn w-100"
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  openEntry(entry);
+                }}
+              >
+                <i className="bi bi-eye" /> View Details
+              </button>
+            </article>
+          ))
+        ) : (
+          <div className="empty-state-inline panel-card">
+            <i className="bi bi-file-earmark-bar-graph" />
+            <p className="mb-1 fw-semibold">No report rows found</p>
+            <small className="text-muted">Adjust the filter values and try again.</small>
           </div>
         )}
       </section>
 
-      {selectedId && (
+      {totalPages > 1 && (
+        <nav className="d-flex justify-content-center align-items-center gap-3" aria-label="Report pagination">
+          <button
+            className="outline-btn"
+            type="button"
+            disabled={page <= 1}
+            onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+          >
+            <i className="bi bi-chevron-left" /> Previous
+          </button>
+          <span className="text-muted small">
+            Page {page} of {totalPages}
+          </span>
+          <button
+            className="outline-btn"
+            type="button"
+            disabled={page >= totalPages}
+            onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+          >
+            Next <i className="bi bi-chevron-right" />
+          </button>
+        </nav>
+      )}
+
+      {selectedEntry && (
         <EntryDetailsModal
-          entry={visibleEntries.find((e) => e.uniqueId === selectedId)!}
-          onClose={() => setSelectedId(null)}
+          entry={selectedEntry}
+          onClose={() => {
+            setSelectedId(null);
+          }}
         />
       )}
     </div>
